@@ -5,3 +5,6 @@ campaign-backup-*.json
 
 # Valve's file: the server copies it from an installed Steam game by itself, and it isn't ours to share
 steam_api64.dll
+
+# Automatic campaign backups made by the app (they include your players' nicknames)
+Campaigns/

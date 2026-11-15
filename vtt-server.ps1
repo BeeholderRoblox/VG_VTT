@@ -579,9 +579,153 @@ public class VttServer {
                 WebSocket(tcp, ns, h, ParseQuery(q));
                 return;
             }
-            Serve(ns, path);
+            if (path.StartsWith("/campaign")) { CampaignApi(tcp, ns, rl[0], path, ParseQuery(q), h); }
+            else if (path.StartsWith("/art-")) { ArtApi(tcp, ns, rl[0], path, ParseQuery(q), h); }
+            else Serve(ns, path);
         } catch { }
         try { tcp.Close(); } catch { }
+    }
+    /* ---- campaign files: saved next to the app in "Campaigns\<name>\", only for requests from this PC ---- */
+    string CampDir { get { return Path.Combine(root, "Campaigns"); } }
+    static string SafeName(string n) {
+        if (string.IsNullOrEmpty(n)) n = "Campaign";
+        char[] bad = Path.GetInvalidFileNameChars(); StringBuilder sb = new StringBuilder();
+        foreach (char ch in n) sb.Append(Array.IndexOf(bad, ch) >= 0 ? '_' : ch);
+        string s = sb.ToString().Trim().TrimEnd('.');
+        if (s.Length > 60) s = s.Substring(0, 60).Trim();
+        if (s.Length == 0 || s == "." || s == "..") s = "Campaign";
+        return s;
+    }
+    static void Reply(Stream s, string status, string type, byte[] body) {
+        byte[] hb = Encoding.ASCII.GetBytes("HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + body.Length + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+        s.Write(hb, 0, hb.Length); s.Write(body, 0, body.Length); s.Flush();
+    }
+    static long UnixMs(DateTime t) { return (long)(t.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds; }
+    string ListCampaigns() {
+        StringBuilder sb = new StringBuilder("["); bool first = true;
+        if (Directory.Exists(CampDir)) foreach (string d in Directory.GetDirectories(CampDir)) {
+            FileInfo[] fs = new DirectoryInfo(d).GetFiles("*.json");
+            if (fs.Length == 0) continue;
+            Array.Sort(fs, delegate(FileInfo a, FileInfo b) { return b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc); });
+            if (!first) sb.Append(','); first = false;
+            sb.Append("{\"name\":").Append(Util.JsonStr(Path.GetFileName(d))).Append(",\"files\":[");
+            for (int i = 0; i < fs.Length && i < 60; i++) {
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"f\":").Append(Util.JsonStr(fs[i].Name)).Append(",\"t\":").Append(UnixMs(fs[i].LastWriteTime)).Append(",\"size\":").Append(fs[i].Length).Append('}');
+            }
+            sb.Append("]}");
+        }
+        return sb.Append(']').ToString();
+    }
+    void CampaignApi(TcpClient tcp, Stream s, string method, string path, Dictionary<string, string> q, Dictionary<string, string> h) {
+        IPEndPoint ep = tcp.Client.RemoteEndPoint as IPEndPoint;
+        if (ep == null || !IPAddress.IsLoopback(ep.Address)) { Reply(s, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("Only the GM's own PC can do that.")); return; }
+        if (!LocalPage(h)) { Reply(s, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("Only the VTT page on this PC can do that.")); Warn("Blocked a request from another website (" + OriginOf(h) + ")."); return; }
+        try {
+            string c, f, name, kind;
+            q.TryGetValue("c", out c); q.TryGetValue("f", out f); q.TryGetValue("name", out name); q.TryGetValue("kind", out kind);
+            if (path == "/campaigns" && method == "GET") { Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"folder\":" + Util.JsonStr(CampDir) + ",\"list\":" + ListCampaigns() + "}")); return; }
+            if (path == "/campaign-file" && method == "GET") {
+                string file = Path.Combine(Path.Combine(CampDir, SafeName(c)), Path.GetFileName(f ?? ""));
+                if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || !File.Exists(file)) { Reply(s, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("No such save")); return; }
+                Reply(s, "200 OK", "application/json", File.ReadAllBytes(file)); return;
+            }
+            if (path == "/campaign-save" && method == "POST") {
+                string ls; int len = 0; if (h.TryGetValue("Content-Length", out ls)) int.TryParse(ls, out len);
+                if (len <= 0 || len > 256 * 1024 * 1024) { Reply(s, "413 Payload Too Large", "text/plain", Encoding.UTF8.GetBytes("Bad size")); return; }
+                byte[] body = new byte[len]; int got = 0;
+                while (got < len) { int n = s.Read(body, got, len - got); if (n <= 0) break; got += n; }
+                if (got < len) { Reply(s, "400 Bad Request", "text/plain", Encoding.UTF8.GetBytes("Incomplete")); return; }
+                string safe = SafeName(name), dir = Path.Combine(CampDir, safe); Directory.CreateDirectory(dir);
+                string tag = kind == "manual" ? "saved" : kind == "switch" ? "before switching" : "auto";
+                string file = Path.Combine(dir, safe + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + " " + tag + ".json");
+                File.WriteAllBytes(file + ".tmp", body); if (File.Exists(file)) File.Delete(file); File.Move(file + ".tmp", file);
+                // keep the 30 newest automatic backups of each campaign (saves you made yourself are kept)
+                FileInfo[] autos = new DirectoryInfo(dir).GetFiles("* auto.json");
+                Array.Sort(autos, delegate(FileInfo a, FileInfo b) { return a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc); });
+                for (int i = 0; i < autos.Length - 30; i++) { try { autos[i].Delete(); } catch { } }
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true,\"file\":" + Util.JsonStr(Path.GetFileName(file)) + ",\"folder\":" + Util.JsonStr(dir) + "}")); return;
+            }
+            if (path == "/campaign-open" && method == "POST") {   // show the folder in File Explorer
+                string dir = string.IsNullOrEmpty(c) ? CampDir : Path.Combine(CampDir, SafeName(c)); Directory.CreateDirectory(dir);
+                System.Diagnostics.Process.Start("explorer.exe", "\"" + dir + "\"");
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}")); return;
+            }
+            Reply(s, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("Not found"));
+        } catch (Exception e) { try { Reply(s, "500 Internal Server Error", "text/plain", Encoding.UTF8.GetBytes(e.Message)); } catch { } }
+    }    /* ---- art folders: "Art\" next to the app (every campaign) and "Campaigns\<name>\Art\" (that campaign only) ----
+       Subfolders are categories, each picture is a PNG, and art.json holds per-picture settings. Only this PC can use these. */
+    string ArtRoot(Dictionary<string, string> q) {
+        string scope, c; q.TryGetValue("scope", out scope); q.TryGetValue("c", out c);
+        return scope == "campaign" ? Path.Combine(Path.Combine(CampDir, SafeName(c)), "Art") : Path.Combine(root, "Art");
+    }
+    // "Trees/Pine Tree.png" -> a safe path inside the art folder (no "..", no drive letters, at most 3 levels, .png only)
+    static string SafeArtPath(string artRoot, string p) {
+        if (string.IsNullOrEmpty(p)) return null;
+        string[] parts = p.Replace('\\', '/').Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || parts.Length > 3) return null;
+        string full = artRoot;
+        for (int i = 0; i < parts.Length; i++) { string s = SafeName(parts[i]); if (s == "Campaign" && parts[i] != "Campaign") return null; full = Path.Combine(full, s); }
+        if (!full.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return null;
+        string a = Path.GetFullPath(artRoot).TrimEnd('\\') + "\\", b = Path.GetFullPath(full);
+        return b.StartsWith(a, StringComparison.OrdinalIgnoreCase) ? b : null;
+    }
+    static byte[] ReadBody(Stream s, Dictionary<string, string> h, int max) {
+        string ls; int len = 0; if (h.TryGetValue("Content-Length", out ls)) int.TryParse(ls, out len);
+        if (len <= 0 || len > max) return null;
+        byte[] body = new byte[len]; int got = 0;
+        while (got < len) { int n = s.Read(body, got, len - got); if (n <= 0) break; got += n; }
+        return got < len ? null : body;
+    }
+    void ArtApi(TcpClient tcp, Stream s, string method, string path, Dictionary<string, string> q, Dictionary<string, string> h) {
+        IPEndPoint ep = tcp.Client.RemoteEndPoint as IPEndPoint;
+        if (ep == null || !IPAddress.IsLoopback(ep.Address)) { Reply(s, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("Only the GM's own PC can do that.")); return; }
+        if (!LocalPage(h)) { Reply(s, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("Only the VTT page on this PC can do that.")); Warn("Blocked a request from another website (" + OriginOf(h) + ")."); return; }
+        try {
+            string ar = ArtRoot(q), p; q.TryGetValue("p", out p);
+            if (path == "/art-list" && method == "GET") {
+                StringBuilder sb = new StringBuilder("{\"folder\":").Append(Util.JsonStr(ar)).Append(",\"files\":[");
+                bool first = true;
+                if (Directory.Exists(ar)) foreach (string f in Directory.GetFiles(ar, "*.png", SearchOption.AllDirectories)) {
+                    string rel = f.Substring(ar.Length).TrimStart('\\').Replace('\\', '/');
+                    if (rel.StartsWith("_Removed/", StringComparison.OrdinalIgnoreCase) || rel.Split('/').Length > 3) continue;
+                    FileInfo fi = new FileInfo(f); if (fi.Length > 4 * 1024 * 1024) continue;
+                    if (!first) sb.Append(','); first = false;
+                    sb.Append("{\"p\":").Append(Util.JsonStr(rel)).Append(",\"t\":").Append(UnixMs(fi.LastWriteTime)).Append(",\"size\":").Append(fi.Length).Append('}');
+                }
+                string mf = Path.Combine(ar, "art.json"), manifest = File.Exists(mf) ? File.ReadAllText(mf, Encoding.UTF8) : "{}";
+                if (manifest.Trim().Length == 0 || manifest.TrimStart()[0] != '{') manifest = "{}";
+                sb.Append("],\"manifest\":").Append(manifest).Append('}');
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes(sb.ToString())); return;
+            }
+            if (path == "/art-file" && method == "GET") {
+                string f = SafeArtPath(ar, p); if (f == null || !File.Exists(f)) { Reply(s, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("No such picture")); return; }
+                Reply(s, "200 OK", "image/png", File.ReadAllBytes(f)); return;
+            }
+            if (path == "/art-save" && method == "POST") {
+                string f = SafeArtPath(ar, p); if (f == null) { Reply(s, "400 Bad Request", "text/plain", Encoding.UTF8.GetBytes("Bad picture path")); return; }
+                byte[] body = ReadBody(s, h, 4 * 1024 * 1024);
+                if (body == null || body.Length < 8 || body[0] != 0x89 || body[1] != 0x50 || body[2] != 0x4E || body[3] != 0x47) { Reply(s, "400 Bad Request", "text/plain", Encoding.UTF8.GetBytes("Not a PNG")); return; }
+                Directory.CreateDirectory(Path.GetDirectoryName(f));
+                File.WriteAllBytes(f + ".tmp", body); if (File.Exists(f)) File.Delete(f); File.Move(f + ".tmp", f);
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}")); return;
+            }
+            if (path == "/art-manifest" && method == "POST") {
+                byte[] body = ReadBody(s, h, 2 * 1024 * 1024); if (body == null) { Reply(s, "400 Bad Request", "text/plain", Encoding.UTF8.GetBytes("Bad settings")); return; }
+                string txt = Encoding.UTF8.GetString(body).Trim(); if (txt.Length == 0 || txt[0] != '{') { Reply(s, "400 Bad Request", "text/plain", Encoding.UTF8.GetBytes("Bad settings")); return; }
+                Directory.CreateDirectory(ar); string mf = Path.Combine(ar, "art.json");
+                File.WriteAllText(mf + ".tmp", txt, new UTF8Encoding(false)); if (File.Exists(mf)) File.Delete(mf); File.Move(mf + ".tmp", mf);
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}")); return;
+            }
+            if (path == "/art-remove" && method == "POST") {   // moved to Art\_Removed, never deleted outright
+                string f = SafeArtPath(ar, p); if (f == null || !File.Exists(f)) { Reply(s, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("No such picture")); return; }
+                string bin = Path.Combine(ar, "_Removed"); Directory.CreateDirectory(bin);
+                string dest = Path.Combine(bin, DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + " " + Path.GetFileName(f)); File.Move(f, dest);
+                Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}")); return;
+            }
+            if (path == "/art-open" && method == "POST") { Directory.CreateDirectory(ar); System.Diagnostics.Process.Start("explorer.exe", "\"" + ar + "\""); Reply(s, "200 OK", "application/json", Encoding.UTF8.GetBytes("{\"ok\":true}")); return; }
+            Reply(s, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("Not found"));
+        } catch (Exception e) { try { Reply(s, "500 Internal Server Error", "text/plain", Encoding.UTF8.GetBytes(e.Message)); } catch { } }
     }
     void Serve(Stream s, string path) {
         byte[] body; string type = "text/html; charset=utf-8", status = "200 OK";
