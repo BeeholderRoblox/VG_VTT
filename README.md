@@ -1,2 +1,2 @@
 # VG_VTT
-vibecoded VTT for Vanguard system
+vibecoded VTT for Vanguard TTRPG system
