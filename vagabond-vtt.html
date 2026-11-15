@@ -2036,13 +2036,14 @@ const ATMO_PRESETS = {
   autumn: ['🍂', 'Autumn wind', { weather: 'leaves', intensity: .6, sepia: .25, sat: 1.1, tint: '#ff9a3c', tintA: .12, wind: .6 }],
   fey: ['✨', 'Fey glade', { weather: 'fireflies', intensity: .7, hue: 25, sat: 1.45, tint: '#b07cff', tintA: .18, light: .66, night: '#140a2a' }],
   eclipse: ['🌑', 'Eclipse', { light: .18, night: '#0a0014', tint: '#6a2aa8', tintA: .3, blend: 'multiply', sat: .6, weather: 'ash', intensity: .2 }],
-  haunted: ['👻', 'Haunted', { fog: .35, fogCol: '#a8b8c8', sat: .35, tint: '#4a6a8a', tintA: .25, light: .45, night: '#020814', flicker: .5 }],
-  oldfilm: ['📜', 'Old film', { sepia: .85, contrast: 1.15, grain: .6, flicker: .35, sat: .8 }],
+  haunted: ['👻', 'Haunted', { fog: .35, fogCol: '#a8b8c8', sat: .35, tint: '#4a6a8a', tintA: .25, light: .45, night: '#020814' }],
+  oldfilm: ['📜', 'Old film', { sepia: .85, contrast: 1.15, grain: .6, sat: .8 }],
   scorching: ['🌵', 'Scorching sun', { bright: 1.12, sat: 1.15, tint: '#ffd27a', tintA: .18, contrast: 1.05 }],
 };
 // a clear day always has some dust drifting in the sun (maps saved before motes existed have none stored)
 const atmoOf = m => { const A = Object.assign({}, ATMO_DEFAULT, (m && m.atmo) || {}); if (A.preset === 'clear' && !(A.motes > 0)) A.motes = .45;
-  if (A.preset === 'forestnight' && !(A.fog >= .5)) { A.fog = .55; A.fogCol = '#8aa4c4'; }   // older saves of Forest night had only a wisp of fog
+  if (A.preset === 'forestnight' && !(A.fog >= .5)) { A.fog = .55; A.fogCol = '#8aa4c4'; }
+  if (A.preset && A.preset !== 'custom') A.flicker = 0;   // no preset blinks any more (maps saved with Haunted / Old film had it)   // older saves of Forest night had only a wisp of fog
   return A; };
 const atmoAnimated = A => A.weather !== 'none' || A.fog > 0 || A.lightning || A.light < .98 || A.grain > 0 || A.flicker > 0 || A.caustics;
 const wparts = []; let atmoFlash = 0, nextBolt = 0, bolt = null, lastAtmoT = performance.now(), wPreset = '';
@@ -4639,7 +4640,7 @@ const groundCv = document.createElement('canvas'); let groundKey = '', groundAt 
 const GMARGIN = 240;
 function groundLayer(m, W, H, k, PV, grid) {
   const fogSig = m.fogOn && PV ? Object.keys(m.fog).length : -1;
-  const key = [m.id, groundVer, view.zoom.toFixed(4), view.rot.toFixed(4), W, H, k, grid ? 1 : 0, fogSig, m.bg, m.w, m.h, Object.keys(m.walls).length].join('|');   // walls: their contact shading is baked in
+  const key = [m.id, groundVer, view.zoom.toFixed(4), view.rot.toFixed(4), W, H, k, grid ? 1 : 0, fogSig, m.bg, m.w, m.h, Object.keys(m.walls).length, ui.bump !== false ? bumpSun(m) : 0].join('|');   // walls (contact shading) and the sun (ground bumps) are baked in
   const dx = view.ox - groundAt.ox, dy = view.oy - groundAt.oy;
   if (key === groundKey && Math.abs(dx) < GMARGIN - 2 && Math.abs(dy) < GMARGIN - 2) return { dx, dy };
   const M = GMARGIN, gw = Math.round((W + 2 * M) * k), gh = Math.round((H + 2 * M) * k);
@@ -4714,8 +4715,10 @@ function drawMap() {
   drawWater(cx, m, now);
   drawScatter(cx, m, now, k, PV, W, H);   // grass tufts and ground foliage, swaying in the wind
   const items = [];
-  for (const key in m.walls) { const [x, y] = key.split(',').map(Number); if (x >= m.w || y >= m.h || hideFog(x, y)) continue; items.push({ d: depthOf(x + .5, y + .5), kind: 'wall', x, y, key, id: m.walls[key] }); }
-  for (const t of m.tokens) { if (PV && (t.hidden || fogged(t.x, t.y))) continue; const c = tokenCell(t), sz = foot(t); items.push({ d: depthOf(c.x + sz / 2, c.y + sz / 2) + .02, kind: 'token', t, c }); }
+  // what a player can see fades in and out (fog revealed, GM hides or shows something) instead of popping
+  for (const key in m.walls) { const [x, y] = key.split(',').map(Number); if (x >= m.w || y >= m.h) continue; const va = visFade('w' + m.id + key, !hideFog(x, y), now); if (va <= 0) continue;
+    items.push({ d: depthOf(x + .5, y + .5), kind: 'wall', x, y, key, id: m.walls[key], va }); }
+  for (const t of m.tokens) { const va = visFade(t.id, !(PV && (t.hidden || fogged(t.x, t.y))), now); if (va <= 0) continue; const c = tokenCell(t), sz = foot(t); items.push({ d: depthOf(c.x + sz / 2, c.y + sz / 2) + .02, kind: 'token', t, c, va }); }
   items.sort((a, b) => a.d - b.d);
   const elevated = Object.keys(m.elev || {}).length > 0;
   if (ui.castShadows !== false && qualityLevel() < 2) drawCastShadows(cx, m, now, A, PV);   // real shadows on the ground, under everything that stands
@@ -4723,6 +4726,7 @@ function drawMap() {
   const fogQ = A.fog > 0 && ui.volFog !== false ? fogPuffsFrame(m, A, now, PV, items) : null; let fi = 0;   // fog puffs on the board, in depth order with everything else
   for (const it of items) {
     if (fogQ) while (fi < fogQ.length && fogQ[fi].d <= it.d) drawFogPuff(cx, fogQ[fi++]);
+    cx.globalAlpha = it.va ?? 1;
     if (it.kind === 'wall') {
       const s = sprById(it.id), img = spriteCanvas(it.id); if (!s || !img) continue;
       const pr = presetOf(m, it.key), dmg = (m.dmg[it.key] || 0) / ((pr && pr.hp) || 20);
@@ -4736,6 +4740,7 @@ function drawMap() {
     drawTokenRing(cx, it.t, it.c, m); drawToken(cx, it.t, it.c);
     if (elevated) occlude(cx, m, Math.floor(it.c.x), Math.floor(it.c.y), foot(it.t), zFoot(Math.floor(it.c.x), Math.floor(it.c.y), foot(it.t)), it.d, grid);
   }
+  cx.globalAlpha = 1; propWins = null;   // windows are worked out again next frame
   if (fogQ) while (fi < fogQ.length) drawFogPuff(cx, fogQ[fi++]);
   swayActive = swaySeen > 0;   // keeps the idle animation ticking for maps with trees but no characters
   drawXray(cx, m, items, k, WH);
@@ -6421,7 +6426,7 @@ function drawXray(cx, m, items, k, WH) {
   const want = items.filter(it => it.kind === 'token' && !isProp(it.t) && (it.t.id === ui.selToken || (!gmView() && ownsToken(it.t)) || (isActiveTurn(it.t, m))));
   for (const me of want) {
     const box = itemBox(me, m, WH), pad = 4; box.x -= pad; box.y -= pad; box.w += pad * 2; box.h += pad * 2;
-    const front = items.filter(it => it !== me && it.d > me.d && (it.kind === 'wall' || isProp(it.t) || it.kind === 'token') && boxHit(itemBox(it, m, WH), box)); if (!front.length) continue;
+    const front = items.filter(it => it !== me && it.d > me.d && (it.kind === 'wall' ? sprById(it.id)?.kind === 'wall' : !isProp(it.t)) && boxHit(itemBox(it, m, WH), box)); if (!front.length) continue;   // props get the dithered window instead
     const w = Math.max(1, Math.ceil(box.w * k)), h = Math.max(1, Math.ceil(box.h * k));
     for (const c of [xrayMask, xraySil]) { if (c.width < w || c.height < h) { c.width = Math.max(w, c.width); c.height = Math.max(h, c.height); } }
     const mk = xrayMask.getContext('2d'), sl = xraySil.getContext('2d');
@@ -9281,7 +9286,7 @@ function hazeOf(A) {
 // contact shading, baked into the cached ground
 const _drawColumnAO = drawColumn;
 drawColumn = function (cx, m, x, y, grid) {
-  _drawColumnAO.call(this, cx, m, x, y, false); blendCell(cx, m, x, y); if (ui.ao !== false) aoCell(cx, m, x, y);
+  _drawColumnAO.call(this, cx, m, x, y, false); bumpCell(cx, m, x, y); blendCell(cx, m, x, y); if (ui.ao !== false) aoCell(cx, m, x, y);
   if (grid && !(m.bridge && m.bridge[x + ',' + y] != null)) {   // the grid goes on last, so blended borders never cut it into broken pieces
     const g = groundOf(m, x, y); quadPath(cx, [isoPt(x, y, g), isoPt(x + 1, y, g), isoPt(x + 1, y + 1, g), isoPt(x, y + 1, g)]); cx.strokeStyle = 'rgba(0,0,0,.16)'; cx.lineWidth = 1; cx.stroke(); }
 };
@@ -9294,6 +9299,35 @@ function blendTag(id) {
   if (blendKey !== S.sprites.length) { blendIds = new Map(); for (const t in BLEND_RANK) { const s = starter(t); if (s) blendIds.set(s.id, t); } blendKey = S.sprites.length; }
   return blendIds.get(id);
 }
+/* bump maps for natural floors: the texture's own light and dark become a height map; its slopes are lit from the map's sun
+   (direction and height), giving a faint emboss of light and shade. Made once per texture and sun position (in 15°/10° steps),
+   baked into the cached ground. Unintrusive: at most a third of the way to white or black. */
+const bumpCache = new Map();
+const bumpSun = m => { const A = atmoOf(m); return Math.round((+A.sunAz || 0) / 15) + ',' + Math.round(clamp(+A.sunEl || 45, 5, 89) / 10); };
+function bumpOverlay(id, m) {
+  if (ui.bump === false || !blendTag(id)) return null; const s = sprById(id), img = spriteCanvas(id); if (!s || !img) return null;
+  const sb = bumpSun(m), key = id + '|' + (s.v || 0) + '|' + img.width + '|' + sb + '|' + (s.bright || 1) + '|' + (s.dark || 0); let c = bumpCache.get(key); if (c !== undefined) return c;
+  const [azb, elb] = sb.split(',').map(Number), az = azb * 15 * D2R, el = elb * 10 * D2R, Lx = Math.cos(az) * Math.cos(el), Ly = Math.sin(az) * Math.cos(el), Lz = Math.sin(el);
+  const N = img.width, Hh = img.height, d = img.getContext('2d').getImageData(0, 0, N, Hh).data, lum = new Float32Array(N * Hh);
+  for (let i = 0; i < N * Hh; i++) lum[i] = (d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11) / 255;
+  c = document.createElement('canvas'); c.width = N; c.height = Hh; const g = c.getContext('2d'), out = g.createImageData(N, Hh), K = 2.6;
+  for (let y = 0; y < Hh; y++) for (let x = 0; x < N; x++) {   // slopes stop at the texture's edge (no wrap): a texture that doesn't tile perfectly must not get a ridge along every square edge
+    const at = (xx, yy) => lum[clamp(yy, 0, Hh - 1) * N + clamp(xx, 0, N - 1)];
+    const nx = -(at(x + 1, y) - at(x - 1, y)) * K, ny = -(at(x, y + 1) - at(x, y - 1)) * K, l = Math.hypot(nx, ny, 1);
+    const v = (nx * Lx + ny * Ly + Lz) / l - Lz, a = Math.min(.34, Math.abs(v) * 1.1), i = (y * N + x) * 4;
+    if (a > .01) out.data.set(v > 0 ? [255, 248, 228, a * 255] : [0, 0, 0, a * 255], i);
+  }
+  g.putImageData(out, 0, 0); if (bumpCache.size > 60) bumpCache.clear(); bumpCache.set(key, c); return c;
+}
+function bumpCell(cx, m, x, y) {
+  const k = x + ',' + y, id = m.tiles[k]; if (!id || (m.bridge && m.bridge[k] != null)) return; const bo = bumpOverlay(id, m); if (!bo) return;
+  const g = groundOf(m, x, y), C = [isoPt(x, y, g), isoPt(x + 1, y, g), isoPt(x, y + 1, g)], sp = Math.max(1, Math.round(+sprById(id)?.span || 1)), n = bo.width / sp;
+  cx.save(); cx.transform((C[1][0] - C[0][0]) / n, (C[1][1] - C[0][1]) / n, (C[2][0] - C[0][0]) / n, (C[2][1] - C[0][1]) / n, C[0][0], C[0][1]);
+  if (sp > 1) cx.drawImage(bo, (((x % sp) + sp) % sp) * n, (((y % sp) + sp) % sp) * n, n, n, 0, 0, n + .6, n + .6); else cx.drawImage(bo, 0, 0, n + .6, n + .6);
+  cx.restore();
+}
+try { ui.bump = localStorage.getItem('vtt-bump') !== 'off'; } catch (e) { ui.bump = true; }
+document.addEventListener('change', e => { if (e.target.id !== 'optBump') return; ui.bump = e.target.checked; try { localStorage.setItem('vtt-bump', ui.bump ? 'on' : 'off'); } catch (_) {} bumpGround(); groundKey = ''; requestDraw(); });
 // depth of the fringe at a square corner: the same for every square that shares that corner, so a border flows on without notches
 const vDepth = (vx, vy, axis) => { const h = Math.sin(vx * 127.1 + vy * 311.7 + axis * 74.7) * 43758.5453; return .08 + (h - Math.floor(h)) * .24; };
 function blendCell(cx, m, x, y) {
@@ -9310,9 +9344,10 @@ function blendCell(cx, m, x, y) {
       cx.save(); cx.beginPath(); path(mul); cx.closePath(); cx.clip(); cx.globalAlpha = alpha;
       cx.transform((C[1][0] - C[0][0]) / n, (C[1][1] - C[0][1]) / n, (C[3][0] - C[0][0]) / n, (C[3][1] - C[0][1]) / n, C[0][0], C[0][1]);
       if (sp > 1) cx.drawImage(img, sx, sy, n, n, 0, 0, n + .6, n + .6); else cx.drawImage(img, 0, 0, n + .6, n + .6);
+      const bo = bumpOverlay(id, m); if (bo) { if (sp > 1) cx.drawImage(bo, sx, sy, n, n, 0, 0, n + .6, n + .6); else cx.drawImage(bo, 0, 0, n + .6, n + .6); }   // the fringe keeps its bumps
       cx.restore(); }
   };
-  const mv = (u, v) => { const p = P(u, v); cx.moveTo(p[0], p[1]); }, ln = (u, v) => { const p = P(u, v); cx.lineTo(p[0], p[1]); };
+  const mv =(u, v) => { const p = P(u, v); cx.moveTo(p[0], p[1]); }, ln = (u, v) => { const p = P(u, v); cx.lineTo(p[0], p[1]); };
   const qc = (u1, v1, u2, v2) => { const a = P(u1, v1), b = P(u2, v2); cx.quadraticCurveTo(a[0], a[1], b[0], b[1]); };
   // 1) ragged tongues along each side that touches a stronger floor
   const sides = [];
@@ -9406,10 +9441,58 @@ atmoPanel = function (m) { const A = atmoOf(m);
   return _atmoPanelWind.apply(this, arguments) + `<div class="sunBox"><b class="small">🌬 Wind &amp; distance</b>
     <label class="aRow">Wind direction <span class="muted">${Math.round(+A.windAz || 0)}°</span><input type="range" data-atmo-f="windAz" min="0" max="359" step="1" value="${+A.windAz || 0}"></label>
     <label class="aRow">Distance haze<input type="range" data-atmo-f="haze" min="0" max="1" step=".05" value="${A.haze ?? .3}"></label>
-    <label class="inline small"><input type="checkbox" id="optAO" ${ui.ao !== false ? 'checked' : ''}> Contact shading at walls and cliffs</label></div>`; };
+    <label class="inline small"><input type="checkbox" id="optAO" ${ui.ao !== false ? 'checked' : ''}> Contact shading at walls and cliffs</label>
+    <label class="inline small"><input type="checkbox" id="optBump" ${ui.bump !== false ? 'checked' : ''}> Bumpy natural ground (lit by the sun)</label></div>`; };
 document.addEventListener('input', e => { if (e.target.dataset && e.target.dataset.atmoF === 'windAz') { const s = e.target.parentElement.querySelector('span'); if (s) s.textContent = Math.round(+e.target.value) + '°'; } });
 try { ui.ao = localStorage.getItem('vtt-ao') !== 'off'; } catch (e) { ui.ao = true; }
 document.addEventListener('change', e => { if (e.target.id !== 'optAO') return; ui.ao = e.target.checked; try { localStorage.setItem('vtt-ao', ui.ao ? 'on' : 'off'); } catch (_) {} bumpGround(); groundKey = ''; requestDraw(); });
+
+/* ---------- see-through windows in props ----------
+   When a tree, rock or other prop stands in front of any character, a round window is cut into the prop around the
+   character: clear in the middle, with a dithered (Bayer) rim, so you see the character and the ground behind it.
+   The prop is drawn into a scratch canvas, the hole is cut, then it goes onto the map. */
+const winCv = document.createElement('canvas'), holeCache = new Map(), BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+let propWins = null;   // this frame's character windows (worked out on the first prop drawn)
+function holeMask(R, ps) {   // white disc: solid to 60% of the radius, then a dithered fade to nothing at the rim
+  const key = R + '|' + ps; let c = holeCache.get(key); if (c) return c; const D = R * 2;
+  c = document.createElement('canvas'); c.width = c.height = Math.max(1, D); const g = c.getContext('2d'), img = g.createImageData(c.width, c.height);
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) { const r = Math.hypot(x + .5 - R, y + .5 - R) / R, dens = r < .6 ? 1 : clamp((1 - r) / .4, 0, 1);
+    if (dens > 0 && BAYER4[(((y / ps) | 0) & 3) * 4 + (((x / ps) | 0) & 3)] / 16 < dens) img.data[(y * c.width + x) * 4 + 3] = 255; }
+  g.putImageData(img, 0, 0); if (holeCache.size > 60) holeCache.clear(); holeCache.set(key, c); return c;
+}
+function charWindows(m) {
+  if (propWins) return propWins; const PV = pvNow(); propWins = [];
+  for (const t of m.tokens) { if (isProp(t) || (PV && (t.hidden || (m.fogOn && !m.fog[t.x + ',' + t.y])))) continue;
+    const c = tokenCell(t), sz = foot(t), fr = figureRect(tokenSprite(t), c.x, c.y, sz, .95 * tScale(t)), lift = tokenLift(t, performance.now());
+    propWins.push({ d: depthOf(c.x + sz / 2, c.y + sz / 2) + .02, x: fr.fx, y: fr.fy - lift - fr.h * .45, r: Math.max(fr.w, fr.h) * .62 }); }
+  return propWins;
+}
+const _drawTokenWin = drawToken;
+drawToken = function (cx, t, c) {
+  if (!isProp(t) || !c || c.ghost || ui.propWindows === false || cx !== off.getContext('2d')) return _drawTokenWin.apply(this, arguments);
+  const m = curMap(), sz = foot(t), d = depthOf(c.x + sz / 2, c.y + sz / 2) + .02, fr = figureRect(tokenSprite(t), c.x, c.y, sz, tScale(t)), pad = fr.w * .35;
+  const bx = fr.x - pad, by = fr.y - pad, bw = fr.w + pad * 2, bh = fr.fy - fr.y + pad * 1.5;
+  const hits = charWindows(m).filter(W => W.d < d && W.x + W.r > bx && W.x - W.r < bx + bw && W.y + W.r > by && W.y - W.r < by + bh);
+  if (!hits.length) return _drawTokenWin.apply(this, arguments);
+  const k = cx.getTransform().a || 1, w = Math.max(1, Math.ceil(bw * k)), h = Math.max(1, Math.ceil(bh * k));
+  if (winCv.width < w || winCv.height < h) { winCv.width = Math.max(w, winCv.width); winCv.height = Math.max(h, winCv.height); }
+  const g = winCv.getContext('2d'); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+  g.setTransform(k, 0, 0, k, -bx * k, -by * k); g.imageSmoothingEnabled = false; g.globalAlpha = cx.globalAlpha;
+  const r = _drawTokenWin.call(this, g, t, c);   // the prop, on its own
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'destination-out'; const ps = Math.max(2, Math.round(k * Math.max(1, view.zoom) * 1.4));
+  for (const W of hits) { const R = Math.max(4, Math.round(W.r * k)); g.drawImage(holeMask(R, ps), Math.round((W.x - bx) * k) - R, Math.round((W.y - by) * k) - R); }   // cut the windows
+  g.globalCompositeOperation = 'source-over';
+  cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.globalAlpha = 1; cx.drawImage(winCv, 0, 0, w, h, Math.round(bx * k), Math.round(by * k), w, h); cx.restore();
+  return r;
+};
+// fading in and out: each token and wall remembers whether the player could see it, and eases over ~0.45 s when that changes
+const visState = new Map();
+function visFade(id, vis, now) {
+  let s = visState.get(id); if (!s) { visState.set(id, s = { vis, t0: -1e9 }); }
+  if (s.vis !== vis) { s.vis = vis; s.t0 = now; }
+  const a = clamp((now - s.t0) / 450, 0, 1); if (a < 1) requestDraw(); const e = a * a * (3 - 2 * a);
+  return vis ? e : 1 - e;
+}
 
 // leaves flutter side to side on the way down; needles mostly drop
 const _updPartsFall = updParts;
