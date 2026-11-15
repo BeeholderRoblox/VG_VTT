@@ -626,6 +626,10 @@ header .menuBtn:hover{border-color:var(--accent)}
 .sunRow{display:flex;gap:8px;align-items:center}
 .sunDial{width:64px;height:64px;flex:none;color:var(--ink)}
 .tilePic{background-size:33.33% 33.33%;background-repeat:repeat;image-rendering:pixelated;width:96px;height:96px;margin:0 auto;border-radius:6px;border:1px solid var(--line)}
+.libGrid .libCatHead{grid-column:1/-1;margin:14px 0 0;padding-bottom:4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--gold,#d9a441)}.libGrid .libCatHead:first-child{margin-top:0}
+.libCard .tileDark{display:flex;flex-direction:row;align-items:center;gap:6px;margin:0}.libCard .tileDark span{min-width:30px}.libCard .tileDark input{flex:1;min-width:0;margin:0}
+.grassPics{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.grassPic{display:flex;flex-direction:column;align-items:center;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.grassPic img{width:44px;height:44px;object-fit:contain}.grassOpts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;margin-top:8px}.grassOpts label{display:flex;flex-direction:column}
 .tileGrid{display:flex;gap:14px;flex-wrap:wrap}.tileGrid canvas{border:1px solid var(--line);border-radius:6px;image-rendering:pixelated;width:288px;height:288px}
 .tileOpts{display:flex;flex-direction:column;gap:8px;min-width:200px;flex:1}
 </style>
@@ -1883,7 +1887,10 @@ function drawColumn(cx, m, x, y, grid) {
     const gr = cx.createLinearGradient(0, A[1], 0, A[1] + hpx); gr.addColorStop(0, `rgba(0,0,0,${f.right ? .42 : .2})`); gr.addColorStop(1, `rgba(0,0,0,${nz <= -3 ? .92 : f.right ? .6 : .45})`);
     cx.fillStyle = gr; cx.fill();
   }
-  if (img) { const n = img.width; cx.save(); cx.transform((top[1][0] - top[0][0]) / n, (top[1][1] - top[0][1]) / n, (top[3][0] - top[0][0]) / n, (top[3][1] - top[0][1]) / n, top[0][0], top[0][1]); cx.drawImage(img, 0, 0, n + .6, n + .6); cx.restore(); }
+  if (img) {   // a texture can spread over several squares (its "span"): each square shows its own part of it
+    const sp = Math.max(1, Math.round(+sprById(id)?.span || 1)), n = img.width / sp, sx = sp > 1 ? (((x % sp) + sp) % sp) * n : 0, sy = sp > 1 ? (((y % sp) + sp) % sp) * n : 0;
+    cx.save(); cx.transform((top[1][0] - top[0][0]) / n, (top[1][1] - top[0][1]) / n, (top[3][0] - top[0][0]) / n, (top[3][1] - top[0][1]) / n, top[0][0], top[0][1]);
+    if (sp > 1) cx.drawImage(img, sx, sy, n, n, 0, 0, n + .6, n + .6); else cx.drawImage(img, 0, 0, n + .6, n + .6); cx.restore(); }
   else { quadPath(cx, top); cx.fillStyle = g <= -3 ? '#09080d' : m.bg; cx.fill(); }
   if (g <= -3) { quadPath(cx, top); cx.fillStyle = 'rgba(0,0,0,.35)'; cx.fill(); }
   else if (g > 0) { quadPath(cx, top); cx.fillStyle = `rgba(255,240,210,${Math.min(.12, g * .03)})`; cx.fill(); }
@@ -2034,7 +2041,9 @@ const ATMO_PRESETS = {
   scorching: ['🌵', 'Scorching sun', { bright: 1.12, sat: 1.15, tint: '#ffd27a', tintA: .18, contrast: 1.05 }],
 };
 // a clear day always has some dust drifting in the sun (maps saved before motes existed have none stored)
-const atmoOf = m => { const A = Object.assign({}, ATMO_DEFAULT, (m && m.atmo) || {}); if (A.preset === 'clear' && !(A.motes > 0)) A.motes = .45; return A; };
+const atmoOf = m => { const A = Object.assign({}, ATMO_DEFAULT, (m && m.atmo) || {}); if (A.preset === 'clear' && !(A.motes > 0)) A.motes = .45;
+  if (A.preset === 'forestnight' && !(A.fog >= .5)) { A.fog = .55; A.fogCol = '#8aa4c4'; }   // older saves of Forest night had only a wisp of fog
+  return A; };
 const atmoAnimated = A => A.weather !== 'none' || A.fog > 0 || A.lightning || A.light < .98 || A.grain > 0 || A.flicker > 0 || A.caustics;
 const wparts = []; let atmoFlash = 0, nextBolt = 0, bolt = null, lastAtmoT = performance.now(), wPreset = '';
 let fogTex = null, fogTexCol = '';
@@ -2110,7 +2119,7 @@ function spawnFx(m, dt) {
 }
 function updParts(dt) {
   for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.life += dt; p.vz -= p.g * dt; p.z += p.vz * dt; p.gx += p.vx * dt; p.gy += p.vy * dt;
-    const lands = p.t === 'blood' || p.t === 'debris';
+    const lands = p.t === 'blood' || p.t === 'debris' || p.t === 'leaf' || p.t === 'needle';   // leaves and needles settle on the ground and fade
     if (p.life >= p.max || (p.z < 0 && !lands)) parts.splice(i, 1); else if (lands && p.z < 0) { p.z = 0; p.vz = 0; p.vx = p.vy = 0; p.g = 0; } }
   for (let i = floaters.length - 1; i >= 0; i--) { floaters[i].t += dt; if (floaters[i].t > 1.5) floaters.splice(i, 1); }
 }
@@ -2135,6 +2144,7 @@ function drawParts(cx, m) {
         case 'debris': col = p.col || (p.seed > .5 ? '#77736c' : '#5f5b55'); a = Math.min(1, (1 - f) * 3); break;
         case 'spark': col = p.seed > .5 ? '#fff6c8' : '#ffd35a'; break;
         case 'dust': col = p.seed > .5 ? '#c9b48e' : '#a8936f'; a = .5 * (1 - f); break;
+        case 'leaf': case 'needle': col = p.col; a = Math.min(1, (1 - f) * 5, p.life * 3); break;
         default: col = '#ffffff';
       }
       const grow = (p.t === 'smoke' || p.t === 'poison' || p.t === 'darkness' || p.t === 'dust') ? 1 + f * 1.5 : 1;
@@ -2156,6 +2166,7 @@ function drawParts(cx, m) {
       case 'debris': col = p.col || (p.seed > .5 ? '#77736c' : '#5f5b55'); a = Math.min(1, (1 - f) * 3); break;
       case 'spark': col = p.seed > .5 ? '#fff6c8' : '#ffd35a'; break;
       case 'dust': col = p.seed > .5 ? '#c9b48e' : '#a8936f'; a = .5 * (1 - f); break;
+      case 'leaf': case 'needle': col = p.col; a = Math.min(1, (1 - f) * 5, p.life * 3); break;
       case 'lightning': {
         cx.globalAlpha = 1 - f; cx.strokeStyle = '#fff8b0'; cx.lineWidth = 2.5 * z; cx.beginPath(); cx.moveTo(sx + p.pts[0] * z, by - 150 * z);
         p.pts.forEach((o, i) => cx.lineTo(sx + o * z, by - 150 * z + (i + 1) * 150 * z / p.pts.length)); cx.stroke();
@@ -4534,7 +4545,7 @@ Object.assign(ATMO_DEFAULT, { rays: 0, rayCol: '#fff2c8', clouds: 0, motes: 0, l
   add('sunny', '🌤️', 'Sunbeams', { rays: .75, rayCol: '#fff0c0', clouds: .25, motes: .5, bright: 1.04, sat: 1.12, tint: '#ffd27a', tintA: .1 });
   add('golden', '🌅', 'Golden hour', { ...old.golden[2], rays: .85, rayCol: '#ffb060', motes: .45, clouds: .2 });
   add('forest', '🌳', 'Forest canopy', { rays: .6, rayCol: '#eaffb8', weather: 'leaves', leafCol: 'green', intensity: .3, clouds: .55, sat: 1.15, tint: '#5aa03a', tintA: .12, motes: .4, light: .88, wind: .25 });
-  add('forestnight', '🌲', 'Forest night', { light: .24, night: '#06101a', tint: '#2a5a8a', tintA: .25, blend: 'multiply', weather: 'fireflies', intensity: .85, rays: .35, rayCol: '#a8c8ff', sat: .8, fog: .22, fogCol: '#5a7a9a' });
+  add('forestnight', '🌲', 'Forest night', { light: .24, night: '#06101a', tint: '#2a5a8a', tintA: .25, blend: 'multiply', weather: 'fireflies', intensity: .85, rays: .35, rayCol: '#a8c8ff', sat: .8, fog: .55, fogCol: '#8aa4c4' });
   add('foggyforest', '🌫️', 'Foggy forest', { fog: .7, fogCol: '#c8d4c8', rays: .35, rayCol: '#f0fff0', light: .74, sat: .7, tint: '#4a7a5a', tintA: .16, weather: 'leaves', leafCol: 'green', intensity: .12, wind: .15 });
   add('spring', '🌸', 'Spring petals', { weather: 'leaves', leafCol: 'pink', intensity: .5, rays: .4, rayCol: '#fff0f6', clouds: .25, sat: 1.15, bright: 1.05, tint: '#ffb0d0', tintA: .08, wind: .35 });
   add('greenfall', '🍃', 'Falling leaves', { weather: 'leaves', leafCol: 'green', intensity: .7, wind: .5, clouds: .3, sat: 1.1, rays: .25, rayCol: '#f4ffd8' });
@@ -4628,7 +4639,7 @@ const groundCv = document.createElement('canvas'); let groundKey = '', groundAt 
 const GMARGIN = 240;
 function groundLayer(m, W, H, k, PV, grid) {
   const fogSig = m.fogOn && PV ? Object.keys(m.fog).length : -1;
-  const key = [m.id, groundVer, view.zoom.toFixed(4), view.rot.toFixed(4), W, H, k, grid ? 1 : 0, fogSig, m.bg, m.w, m.h].join('|');
+  const key = [m.id, groundVer, view.zoom.toFixed(4), view.rot.toFixed(4), W, H, k, grid ? 1 : 0, fogSig, m.bg, m.w, m.h, Object.keys(m.walls).length].join('|');   // walls: their contact shading is baked in
   const dx = view.ox - groundAt.ox, dy = view.oy - groundAt.oy;
   if (key === groundKey && Math.abs(dx) < GMARGIN - 2 && Math.abs(dy) < GMARGIN - 2) return { dx, dy };
   const M = GMARGIN, gw = Math.round((W + 2 * M) * k), gh = Math.round((H + 2 * M) * k);
@@ -4637,7 +4648,7 @@ function groundLayer(m, W, H, k, PV, grid) {
   const { TW, LV } = isoDims(), items = []; waterCells = [];
   const waterId = (S.sprites.find(s => s.tag === 'water') || {}).id, grassId = (S.sprites.find(s => s.tag === 'grass') || {}).id;
   for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
-    if (PV && m.fogOn && !m.fog[x + ',' + y]) continue;
+    // hidden squares still get their ground drawn: the fog of war covers them (opaque, soft-edged) so its edge shows ground, not a black hole
     const [px, py] = isoPt(x + .5, y + .5, groundOf(m, x, y));
     if (px < -M - TW || px > W + M + TW || py < -M - TW - 8 * LV || py > H + M + TW + 8 * LV) continue;
     items.push([depthOf(x + .5, y + .5), x, y]);
@@ -4648,7 +4659,7 @@ function groundLayer(m, W, H, k, PV, grid) {
   waterCells.sort((a, b) => depthOf(a[0] + .5, a[1] + .5) - depthOf(b[0] + .5, b[1] + .5));
   groundKey = key; groundAt = { ox: view.ox, oy: view.oy }; return { dx: 0, dy: 0 };
 }
-function drawGrassBlades(cx, m, x, y) {
+function drawGrassProc(cx, m, x, y) {   // the built-in drawn blades (used until you add grass pictures)
   const r = rng((x * 73856093) ^ (y * 19349663)), z = groundOf(m, x, y), n = 4 + Math.floor(r() * 5), hgt = 4.6 * view.zoom;
   cx.lineWidth = Math.max(1, view.zoom * 1.2);
   for (let i = 0; i < n; i++) { const [px, py] = isoPt(x + .12 + r() * .76, y + .12 + r() * .76, z), lean = (r() - .5) * 2.6 * view.zoom, hh = hgt * (.6 + r() * .8);
@@ -4701,13 +4712,17 @@ function drawMap() {
   cx.drawImage(groundCv, Math.round((gl.dx - GMARGIN) * k), Math.round((gl.dy - GMARGIN) * k));
   cx.setTransform(k, 0, 0, k, 0, 0);
   drawWater(cx, m, now);
+  drawScatter(cx, m, now, k, PV, W, H);   // grass tufts and ground foliage, swaying in the wind
   const items = [];
   for (const key in m.walls) { const [x, y] = key.split(',').map(Number); if (x >= m.w || y >= m.h || hideFog(x, y)) continue; items.push({ d: depthOf(x + .5, y + .5), kind: 'wall', x, y, key, id: m.walls[key] }); }
   for (const t of m.tokens) { if (PV && (t.hidden || fogged(t.x, t.y))) continue; const c = tokenCell(t), sz = foot(t); items.push({ d: depthOf(c.x + sz / 2, c.y + sz / 2) + .02, kind: 'token', t, c }); }
   items.sort((a, b) => a.d - b.d);
   const elevated = Object.keys(m.elev || {}).length > 0;
   if (ui.castShadows !== false && qualityLevel() < 2) drawCastShadows(cx, m, now, A, PV);   // real shadows on the ground, under everything that stands
+  if (m.fogOn) drawFogOfWar(cx, m, PV, now, W, H, k);   // under everything that stands: visible tokens and props are never covered
+  const fogQ = A.fog > 0 && ui.volFog !== false ? fogPuffsFrame(m, A, now, PV, items) : null; let fi = 0;   // fog puffs on the board, in depth order with everything else
   for (const it of items) {
+    if (fogQ) while (fi < fogQ.length && fogQ[fi].d <= it.d) drawFogPuff(cx, fogQ[fi++]);
     if (it.kind === 'wall') {
       const s = sprById(it.id), img = spriteCanvas(it.id); if (!s || !img) continue;
       const pr = presetOf(m, it.key), dmg = (m.dmg[it.key] || 0) / ((pr && pr.hp) || 20);
@@ -4721,6 +4736,7 @@ function drawMap() {
     drawTokenRing(cx, it.t, it.c, m); drawToken(cx, it.t, it.c);
     if (elevated) occlude(cx, m, Math.floor(it.c.x), Math.floor(it.c.y), foot(it.t), zFoot(Math.floor(it.c.x), Math.floor(it.c.y), foot(it.t)), it.d, grid);
   }
+  if (fogQ) while (fi < fogQ.length) drawFogPuff(cx, fogQ[fi++]);
   swayActive = swaySeen > 0;   // keeps the idle animation ticking for maps with trees but no characters
   drawXray(cx, m, items, k, WH);
   drawHeightGuide(cx, m, now);
@@ -4747,12 +4763,12 @@ function drawMap() {
       for (const [x, y] of effectCells({ shape: dv[3], x: line ? att.x : hover.x, y: line ? att.y : hover.y, dir: fxDir(att, hover) }, m)) { cx.globalAlpha = .28 + .08 * Math.sin(now / 160); diamondPath(cx, x, y); cx.fill(); cx.globalAlpha = .8; cx.stroke(); }
       cx.globalAlpha = 1; } }
   if (ui.targeting && hover && !(hoverPx && tokenAt(hoverPx)) && m.walls[hover.x + ',' + hover.y]) { diamondPath(cx, hover.x, hover.y); cx.strokeStyle = '#ff3b30'; cx.lineWidth = 3; cx.stroke(); }
+  drawRunes(cx, m, now, PV);   // glowing rune circles under spell areas
   // move routes
   const route = moveRoute(m);
   if (route) drawRoute(cx, m, route.t, route.path, route.live, now);
   drawParts(cx, m); drawVfx(cx, m, now);
   drawLighting(cx, m, W, H, k, A, now);
-  if (m.fogOn) drawFogOfWar(cx, m, PV, now);
   if (drag && drag.kind === 'ruler') {
     const a = drag.a, b = drag.b, [ax, ay] = isoPt(a.x + .5, a.y + .5, elevOf(m, a.x, a.y)), [bx, by] = isoPt(b.x + .5, b.y + .5, elevOf(m, b.x, b.y));
     const ft = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) * 5, dz = (elevOf(m, b.x, b.y) - elevOf(m, a.x, a.y)) * 5;
@@ -4890,7 +4906,7 @@ function drawToken(cx, t, c) {
   if (filter) cx.filter = filter;
   const mir = tokenMirror(t), img = spriteCanvas(id);
   const sw = prop && !c.ghost ? swayShear(swayKind((t.label || '') + ' ' + (sprById(id)?.name || '')), c.x, c.y, now) : 0;
-  if (!c.ghost) { tokPose.set(t.id, { ox, oy, sx, sy, rot, sw, lift, lying, at: now }); if (prop) propVfx(t, c, fr, sz, now); }
+  if (!c.ghost) { tokPose.set(t.id, { ox, oy, sx, sy, rot, sw, lift, lying, at: now }); if (prop) { propVfx(t, c, fr, sz, now); treeFall(t, c, fr, sz, now, sw); } }
   cx.save(); cx.translate(fr.fx + ox, fr.fy + oy - lift);
   if (sw) cx.transform(1, 0, -sw, 1, 0, 0);   // shear from the base: the roots stay put
   if (lying) { cx.translate(0, -fr.w * .5); cx.rotate(Math.PI / 2); }
@@ -4901,7 +4917,9 @@ function drawToken(cx, t, c) {
   }
   if (!fr.none && img) cx.drawImage(img, fr.bb.x, fr.bb.y, fr.bb.w, fr.bb.h, lying ? -fr.w / 2 : fr.x - fr.fx, lying ? -fr.h / 2 : fr.y - fr.fy, fr.w, fr.h);
   if (!fr.none && img && !c.ghost && typeof drawRimLight === 'function') drawRimLight(cx, t, id, fr, lying, mir);   // edge light from the sun and nearby lights
-  else { const ry = fr.h / 2; cx.fillStyle = t.color || '#d9a441'; cx.beginPath(); cx.ellipse(0, -ry, fr.w / 2, ry, 0, 0, 7); cx.fill();
+  if (sh && !fr.none && img && !c.ghost) { const fa = 1 - (now - sh) / 170; if (fa > 0) { const ws = silhouette(id, '#ffffff'); if (ws) { const ga = cx.globalAlpha; cx.globalAlpha = ga * fa * .9;   // hit flash
+    cx.drawImage(ws, fr.bb.x, fr.bb.y, fr.bb.w, fr.bb.h, lying ? -fr.w / 2 : fr.x - fr.fx, lying ? -fr.h / 2 : fr.y - fr.fy, fr.w, fr.h); cx.globalAlpha = ga; } } }
+  if (fr.none || !img) { const ry = fr.h / 2;   // no picture: a coloured blob with the first letters of its name cx.fillStyle = t.color || '#d9a441'; cx.beginPath(); cx.ellipse(0, -ry, fr.w / 2, ry, 0, 0, 7); cx.fill();
     cx.scale(mir, 1); cx.fillStyle = '#111'; cx.font = `bold ${Math.max(9, fr.w * .4)}px sans-serif`; cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText((t.label || '?').slice(0, 2), 0, -ry); }
   cx.restore(); if (filter) cx.filter = 'none';   // only touch the filter when one was used (costly to set in Firefox)
   if (lift && !c.ghost) { cx.strokeStyle = 'rgba(255,255,255,.18)'; cx.setLineDash([2, 4]); cx.beginPath(); cx.moveTo(fr.fx, fr.fy); cx.lineTo(fr.fx, fr.fy - lift + 2); cx.stroke(); cx.setLineDash([]); }
@@ -5006,7 +5024,7 @@ function lightSources(m) {
 const shadeOut = document.createElement('canvas'); let shadeKey = '';
 function drawLighting(cx, m, W, H, k, A, now) {
   const amb = A.light; if (amb >= .98) return;
-  const L = lightSources(m), { TW } = isoDims();
+  const L = visibleLights(m), { TW } = isoDims();   // players never see the glow of a light hidden in the fog of war
   const key = m.id + '|' + m.w + 'x' + m.h + '|' + L.map(s => `${s.id}:${s.x},${s.y},${s.r}`).join(';') + '|' + groundVer + '|' + Object.keys(m.walls).length;
   if (key !== lightCache.key) lightCache = { key, t: now, grid: computeLight(m, L), w: m.w };
   const g = lightCache.grid, skey = key + '|' + [view.zoom, view.rot, Math.round(view.ox), Math.round(view.oy), off.width, off.height, k, amb, A.night].join(',');
@@ -5117,10 +5135,10 @@ function drawAtmosphere(cx, W, H, A, now) {
     const ns = loSoft.getContext('2d'), ng = loGlow.getContext('2d');
     if (soft) { ns.setTransform(1, 0, 0, 1, 0, 0); ns.clearRect(0, 0, lw, lh); ns.setTransform(q, 0, 0, q, 0, 0);
       if (A.clouds > 0) { const tex = cloudTex(); patLayer(ns, tex, W, H, 5, (t * (10 + A.wind * 26)) % (256 * 5), (t * 4) % (256 * 5), A.clouds * .32); }
-      if (A.fog > 0) { const tex = fogTexOf(A.fogCol);
-        patLayer(ns, tex, W, H, 4.2, -(t * (7 + A.wind * 18)) % (256 * 4.2), (t * 2) % (256 * 4.2), A.fog * .5);
-        patLayer(ns, tex, W, H, 2.6, (t * (5 + A.wind * 12)) % (256 * 2.6), -(t * 3) % (256 * 2.6) + 90, A.fog * .38);
-        const gg = ns.createLinearGradient(0, H * .45, 0, H); gg.addColorStop(0, hexA(A.fogCol, 0)); gg.addColorStop(1, hexA(A.fogCol, A.fog * .28)); ns.fillStyle = gg; ns.fillRect(0, 0, W, H); } }
+      if (A.fog > 0) { const tex = fogTexOf(A.fogCol), fk = ui.volFog !== false ? .3 : 1;
+        patLayer(ns, tex, W, H, 4.2, -(t * (7 + A.wind * 18)) % (256 * 4.2), (t * 2) % (256 * 4.2), A.fog * .5 * fk);
+        patLayer(ns, tex, W, H, 2.6, (t * (5 + A.wind * 12)) % (256 * 2.6), -(t * 3) % (256 * 2.6) + 90, A.fog * .38 * fk);
+        const gg = ns.createLinearGradient(0, H * .45, 0, H); gg.addColorStop(0, hexA(A.fogCol, 0)); gg.addColorStop(1, hexA(A.fogCol, A.fog * .28 * fk)); ns.fillStyle = gg; ns.fillRect(0, 0, W, H); } }
     if (glow) { ng.setTransform(1, 0, 0, 1, 0, 0); ng.clearRect(0, 0, lw, lh); ng.setTransform(q, 0, 0, q, 0, 0);
       if (A.caustics) { const tex = causticTex(); patLayer(ng, tex, W, H, 1.6, (t * 14) % (256 * 1.6), (t * 9) % (256 * 1.6), .2, 'lighter'); patLayer(ng, tex, W, H, 2.3, -(t * 11) % (256 * 2.3), (t * 15) % (256 * 2.3), .14, 'lighter'); }
       if (A.rays > 0) drawRays(ng, W, H, A, now); }
@@ -5281,6 +5299,7 @@ const GL_SRC = {
     uniform mat3 u_grade; uniform vec4 u_g2; uniform vec3 u_fx;          // g2: bright, contrast, sepia, bloom · fx: vignette, retro, warm
     uniform vec4 u_cloudP, u_fog1, u_fog2, u_caus1, u_caus2; uniform vec3 u_fogCol; uniform float u_fogBot;
     uniform vec4 u_rays[12], u_ray2[12]; uniform vec3 u_rayCol; uniform vec2 u_rayDir; uniform float u_rt; uniform int u_nRays;
+    uniform vec4 u_haze;   // distance haze: the far (top) part of the view fades toward this colour and loses some colour
     uniform vec4 u_tint; uniform int u_blend;   // the map's colour tint (was a CSS blend layer): 0 soft-light 1 multiply 2 overlay 3 color 4 screen 5 hue
     in vec2 v_uv; out vec4 o;
     float lum(vec3 c) { return dot(c, vec3(.3, .59, .11)); }
@@ -5302,6 +5321,8 @@ const GL_SRC = {
         if (u_fx.z > 0.) c = mix(c, softLight(c, vec3(1., .745, .431)), .22); }
       c = clamp(u_grade * c, 0., 1.); c = clamp(c * u_g2.x, 0., 1.); c = clamp((c - .5) * u_g2.y + .5, 0., 1.);
       if (u_g2.z > 0.) c = mix(c, clamp(mat3(.393, .349, .272, .769, .686, .534, .189, .168, .131) * c, 0., 1.), u_g2.z);
+      if (u_haze.a > 0.) { float f = clamp(1. - s.y / (u_css.y * .6), 0., 1.); f *= f * u_haze.a; float l = lum(c);
+        c = mix(c, mix(vec3(l), c, .5), f * .8); c = mix(c, u_haze.rgb, f * .45); }
       if (u_tint.a > 0.) { vec3 T = u_tint.rgb, b;
         if (u_blend == 1) b = c * T; else if (u_blend == 2) b = mix(2. * c * T, screen(c, 2. * T - 1.), step(.5, c)); else if (u_blend == 3) b = setLum(T, lum(c));
         else if (u_blend == 4) b = screen(c, T); else if (u_blend == 5) { float x = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b); b = setLum(setSat(T, x), lum(c)); } else b = softLight(c, T);
@@ -5501,7 +5522,7 @@ function gpuFrame(cv, A, now, flick, dpr, W, H) {
   gpu.nParts = 0;
   // 3) bloom: the bright parts at 1/4 size (tight glow) and 1/16 size (wide halo), each blurred twice.
   //    Daylight only lets truly bright things glow (sun on water, white stone, fire); at night the threshold drops so torches and magic bloom.
-  const dark = 1 - clamp(A.light ?? 1, 0, 1), bloom = ui.postfx !== false && L < 2 && gpu.P.down ? clamp((.24 + dark * .5 + (A.rays > 0 ? .06 : 0)) * (A.bloom ?? 1), 0, 1.4) : 0;
+  const dark = 1 - clamp(A.light ?? 1, 0, 1), bloom = ui.postfx !== false && L < 2 && gpu.P.down ? clamp((.24 + dark * .5 + (A.rays > 0 ? .06 : 0)) * (A.bloom ?? 1) + critBloom(now), 0, 1.8) : 0;
   let b1 = null, b2 = null;
   if (bloom > 0) {
     const bw = Math.max(32, Math.ceil(sc.w / 4)), bh = Math.max(20, Math.ceil(sc.h / 4)), cw2 = Math.max(8, Math.ceil(bw / 4)), ch2 = Math.max(6, Math.ceil(bh / 4));
@@ -5533,10 +5554,12 @@ function gpuFrame(cv, A, now, flick, dpr, W, H) {
   gl.uniform1i(u.u_blend, Math.max(0, ['soft-light', 'multiply', 'overlay', 'color', 'screen', 'hue'].indexOf(A.blend || 'soft-light')));
   gl.uniform3f(u.u_fx, bloom > 0 ? 1 : 0, ui.retro ? 1 : 0, ui.retro && !A.tintA ? 1 : 0);
   const mod = (v, m) => ((v % m) + m) % m;
-  gl.uniform4f(u.u_cloudP, 5, mod(t * (10 + A.wind * 26), 256 * 5), mod(t * 4, 256 * 5), (A.clouds || 0) * .32);
-  gl.uniform4f(u.u_fog1, 4.2, mod(-(t * (7 + A.wind * 18)), 256 * 4.2), mod(t * 2, 256 * 4.2), (A.fog || 0) * .5);
-  gl.uniform4f(u.u_fog2, 2.6, mod(t * (5 + A.wind * 12), 256 * 2.6), mod(-(t * 3), 256 * 2.6) + 90, (A.fog || 0) * .38);
-  gl.uniform3fv(u.u_fogCol, hex3(A.fogCol)); gl.uniform1f(u.u_fogBot, (A.fog || 0) * .28);
+  { const cs = cloudShift(A, t); gl.uniform4f(u.u_cloudP, 5, mod(cs[0], 256 * 5), mod(cs[1], 256 * 5), (A.clouds || 0) * .32 * cs[2]); }   // drift with the wind, pinned to the board, darker under a high sun
+  { const hz = hazeOf(A); gl.uniform4f(u.u_haze, hz[0], hz[1], hz[2], hz[3]); }
+  const fogK = ui.volFog !== false ? .3 : 1;   // with the fog floating on the board, the screen-wide layer is only a faint haze
+  gl.uniform4f(u.u_fog1, 4.2, mod(-(t * (7 + A.wind * 18)), 256 * 4.2), mod(t * 2, 256 * 4.2), (A.fog || 0) * .5 * fogK);
+  gl.uniform4f(u.u_fog2, 2.6, mod(t * (5 + A.wind * 12), 256 * 2.6), mod(-(t * 3), 256 * 2.6) + 90, (A.fog || 0) * .38 * fogK);
+  gl.uniform3fv(u.u_fogCol, hex3(A.fogCol)); gl.uniform1f(u.u_fogBot, (A.fog || 0) * .28 * fogK);
   gl.uniform4f(u.u_caus1, 1.6, mod(t * 14, 256 * 1.6), mod(t * 9, 256 * 1.6), A.caustics ? .2 : 0);
   gl.uniform4f(u.u_caus2, 2.3, mod(-(t * 11), 256 * 2.3), mod(t * 15, 256 * 2.3), A.caustics ? .14 : 0);
   if (A.rays > 0) { const RP = rayParams(A, W, H, now, L >= 2 ? 6 : 12);
@@ -7075,7 +7098,8 @@ function tokenPanel(t) {
     <div class="row"><label>Size<select data-tok-size>${Object.entries(SIZES).map(([k, z]) => `<option value="${k}" ${k === (t.sz || ({ 1: 'medium', 2: 'large', 3: 'huge', 4: 'giant' })[foot(t)]) ? 'selected' : ''}>${z.label}</option>`).join('')}</select></label>
       <label>Scale${sclStepper('tok:' + t.id, tokScalePct(t), 'Make the picture bigger or smaller')}</label>
       <button class="small" data-tokprop="flip" data-tid="${t.id}" title="Face the other way" style="margin-top:14px">↔ Flip</button></div>
-    ${spr ? `<label class="row small">Stand <span id="tokFootV" class="muted">${Math.round((+spr.footOff || 0) * 100)}%</span><input type="range" data-spr-foot="${spr.id}" min="-30" max="30" value="${Math.round((+spr.footOff || 0) * 100)}" class="grow" title="Raise or lower the picture on its square (every copy of this picture)"></label>` : ''}
+    ${spr ? `<label class="row small">Stand <span id="tokFootV" class="muted">${Math.round((+spr.footOff || 0) * 100)}%</span><input type="range" data-spr-foot="${spr.id}" min="-60" max="60" value="${Math.round((+spr.footOff || 0) * 100)}" class="grow" title="Raise or lower the picture on its square (every copy of this picture, including ones already on maps)"></label>
+      <label class="row small">Brightness <span class="muted">${Math.round((+spr.bright || 1) * 100)}%</span><input type="range" data-spr-bright="${spr.id}" min="30" max="170" value="${Math.round((+spr.bright || 1) * 100)}" class="grow" title="Make the picture darker or brighter (every copy of this picture)"></label>` : ''}
     ${prop ? '' : `<div class="row"><label class="grow">Height<select data-tok-hgt>${heightOpts(t.heightFt || '')}</select></label>
       <label>Custom ft<input type="number" data-tok-hgt min="0" max="60" step="0.25" value="${t.heightFt || ''}" placeholder="${ftLabel(tokenFtNow(t))}" style="width:64px"></label>
       <button class="small ${ui.heightGuide ? 'on' : ''}" data-hguide title="Show an average man (5′9″) and woman (5′4″) next to the selected token" style="margin-top:14px">📏 Guide</button></div>`}
@@ -7305,7 +7329,7 @@ function initMapEvents() {
     if (!drag) return;
     const dr = drag; drag = null;
     if (dr.kind === 'pan' && dr.right && !dr.moved) openCtx(e, cellAt(e));
-    if (dr.kind === 'token') { if (dr.cx !== dr.t.x || dr.cy !== dr.t.y) { const dx = dr.cx - dr.t.x, dy = dr.cy - dr.t.y; dr.t.x = dr.cx; dr.t.y = dr.cy; if (!isProp(dr.t)) dr.t.faceDir = [dx, dy]; landings.set(dr.t.id, performance.now()); save(); } renderHUD(); }
+    if (dr.kind === 'token') { if (dr.cx !== dr.t.x || dr.cy !== dr.t.y) { const dx = dr.cx - dr.t.x, dy = dr.cy - dr.t.y; dr.t.x = dr.cx; dr.t.y = dr.cy; dr.t.faceDir = [dx, dy]; /* props turn to face where they were moved too */ landings.set(dr.t.id, performance.now()); save(); } renderHUD(); }
     if (dr.kind === 'move') {
       const p = dr.path.slice(), l = p[p.length - 1]; if (l[0] !== dr.cx || l[1] !== dr.cy) p.push([dr.cx, dr.cy]);
       if (p.length > 1) ui.movePlan = { tokenId: dr.t.id, mapId: curMap().id, path: p };
@@ -7926,7 +7950,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   const t = e.target;
-  if (t.id === 'libQ') { ui.libQ = t.value; renderLibrary(); t.focus(); return; }
+  if (t.id === 'libQ') { ui.libQ = t.value; const p = t.selectionStart; renderLibrary(); const n = $('#libQ'); if (n) { n.focus(); try { n.setSelectionRange(p, p); } catch (_) {} } return; }   // the list re-renders: keep typing in the new box
   if (t.id === 'autoSight') { const m = curMap(); m.autoSight = t.checked; sightKey = ''; save(); requestDraw(); return; }
   if (t.id === 'animOn') { ui.idleAnim = t.checked; try { localStorage.setItem('vtt-anim', t.checked ? 'on' : 'off'); } catch (_) {} requestDraw(); return; }
   if (t.id && t.id.startsWith('b-') && ui.gen && ui.gen.b) { const k = t.id.slice(2), b = ui.gen.b;
@@ -8180,7 +8204,7 @@ function applyArtVariants() {
     const v = variantsOf(tag).sort((a, b) => (a.useAsMain ? -1 : 0) - (b.useAsMain ? -1 : 0) || a.name.localeCompare(b.name))[0], b = v && S.sprites.find(x => x.tag === tag); if (!b) continue;
     if (b.artFrom === v.id && b.size === v.size) continue;
     Object.assign(b, { px: v.px.slice(), size: v.size, custom: true, artFrom: v.id, v: (b.v || 0) + 1 });
-    for (const k of ['defSz', 'defScale', 'heightFt', 'faces', 'footOff']) { if (v[k] != null) b[k] = v[k]; else delete b[k]; }
+    for (const k of ['defSz', 'defScale', 'heightFt', 'faces', 'footOff', 'span']) { if (v[k] != null) b[k] = v[k]; else delete b[k]; }
     spriteCache.delete(b.id); changed++;
   }
   if (changed && typeof bumpGround === 'function') bumpGround();
@@ -8546,7 +8570,7 @@ const groundVec = (gx, gy, z, dx, dy) => { const a = isoPt(gx, gy, z), b = isoPt
 function drawCastShadows(cx, m, now, A, PV) {
   const sun = sunWorld(A), { TW } = isoDims(), day = clamp(A.light ?? 1, 0, 1);
   const sunStr = (+A.shadow || 0) * day * (1 - clamp(A.fog || 0, 0, 1) * .6) * (1 - clamp(A.clouds || 0, 0, 1) * .45);
-  const lights = day < .97 ? lightSources(m) : [], soft = qualityLevel() === 0;
+  const lights = day < .97 ? visibleLights(m) : [], soft = qualityLevel() === 0;
   const fogged = (x, y) => m.fogOn && !m.fog[x + ',' + y];
   for (const t of m.tokens) {
     if (PV && (t.hidden || fogged(t.x, t.y))) continue;
@@ -8612,7 +8636,7 @@ function drawRimLight(cx, t, id, fr, lying, mir) {
   let best = null;
   if (day > .05) { const sun = sunWorld(A), [sx, sy] = groundVec(gx, gy, z, sun.x, sun.y), L = Math.hypot(sx, sy) || 1, ce = Math.cos(sun.el);
     best = { vx: sx / L * ce, vy: sy / L * ce - Math.sin(sun.el), str: day * .38, col: A.rays > 0 ? (A.rayCol || '#fff2c8') : '#fff1d6' }; }
-  if (day < .97) for (const L of lightSources(m)) { if (L.id === t.id) continue; const d = Math.hypot(gx - L.x, gy - L.y); if (d >= L.r) continue;
+  if (day < .97) for (const L of visibleLights(m)) { if (L.id === t.id) continue; const d = Math.hypot(gx - L.x, gy - L.y); if (d >= L.r) continue;
     const str = (1 - d / L.r) * (1 - day * .7) * 1.15; if (best && str <= best.str) continue;
     const [lx, ly] = isoPt(L.x, L.y, zAt(L.x, L.y) + .6), [tx, ty] = [fr.fx, fr.fy - fr.h * .5];
     best = { vx: lx - tx, vy: ly - ty, str, col: L.col || '#ffcf7a' }; }
@@ -8773,10 +8797,15 @@ function drawWater(cx, m, now) {
 
 /* ---------- map tiles: your own textures for floors and walls ---------- */
 const tileTags = () => [...new Set(PRESETS.filter(p => p.cat === 'floor' || p.cat === 'wall').map(p => p.tag))].filter(t => t !== 'void' && t !== 'deck');
+// zoom: how many squares the picture covers on the map (2 = it spreads over 2×2 squares; ½ = it repeats 2×2 times inside one square)
+const tileSpan = o => o.zoom >= 1 ? Math.max(1, Math.min(4, Math.round(o.zoom), Math.floor(128 / o.size))) : 1;
 function makeTilePx(img, o) {
-  const N = o.size, iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height, sq = Math.min(iw, ih), c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
-  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.fillStyle = '#000'; g.fillRect(0, 0, N, N); g.drawImage(img, (iw - sq) / 2, (ih - sq) / 2, sq, sq, 0, 0, N, N);
+  const span = tileSpan(o), rep = o.zoom < 1 ? Math.round(1 / o.zoom) : 1, N = o.size * span; o.N = N; o.span = span;
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height, sq = Math.min(iw, ih), c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.fillStyle = '#000'; g.fillRect(0, 0, N, N);
+  for (let a = 0; a < rep; a++) for (let b = 0; b < rep; b++) g.drawImage(img, (iw - sq) / 2, (ih - sq) / 2, sq, sq, a * N / rep, b * N / rep, N / rep, N / rep);
   let d = g.getImageData(0, 0, N, N).data;
+  if (o.dark > 0) { d = new Uint8ClampedArray(d); const f = 1 - o.dark; for (let i = 0; i < d.length; i += 4) { d[i] *= f; d[i + 1] *= f; d[i + 2] *= f; } }
   if (o.seamless) {   // blend each pixel with the tile shifted by half, weighted towards the edges, so repeats don't show seams
     const out = new Uint8ClampedArray(d.length);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const wx = Math.abs(x + .5 - N / 2) / (N / 2), wy = Math.abs(y + .5 - N / 2) / (N / 2), w = Math.pow(Math.max(wx, wy), 3), i = (y * N + x) * 4, j = (((y + N / 2) % N) * N + ((x + N / 2) % N)) * 4;
@@ -8793,38 +8822,46 @@ function renderTileImport() {
       <div class="tileOpts">
         <label>Detail<select id="tl-size">${[16, 24, 32, 48, 64].map(n => `<option value="${n}" ${T.size === n ? 'selected' : ''}>${n}×${n}${n === 32 ? ' (recommended)' : ''}</option>`).join('')}</select></label>
         <label>Colours <span id="tl-lv">${T.levels}</span><input type="range" id="tl-levels" min="4" max="64" value="${T.levels}"></label>
+        ${b.kind === 'floor' && T.tag !== 'water' ? `<label>Zoom <span id="tl-zv">${zoomLbl(T.zoom)}</span><input type="range" id="tl-zoom" min="0" max="${TILE_ZOOMS.length - 1}" step="1" value="${TILE_ZOOMS.indexOf(T.zoom)}"></label>` : ''}
+        <label>Darken <span id="tl-dv">${Math.round(T.dark * 100)}%</span><input type="range" id="tl-dark" min="0" max="85" step="1" value="${Math.round(T.dark * 100)}"></label>
         <label class="inline"><input type="checkbox" id="tl-seam" ${T.seamless ? 'checked' : ''}> Make it seamless (hides the repeat)</label>
         <div class="small muted">${b.kind === 'wall' ? 'Walls use the texture on every face.' : T.tag === 'water' ? 'Water textures flow slowly across the surface.' : 'Every square of this floor uses the texture.'} ${art.api ? 'It is also saved to My Art → Tiles, so every campaign gets it.' : ''}</div></div></div>`,
     `<button data-act="closeModal">Cancel</button><button class="primary" data-tile-save>✓ Use this texture</button>`);
   drawTilePreview();
 }
 function drawTilePreview() {
-  const T = ui.tileImp, cv = $('#tilePrev'); if (!T || !cv) return; T.px = makeTilePx(T.img, T); const N = T.size, g = cv.getContext('2d'), c = document.createElement('canvas'); c.width = c.height = N;
-  const cc = c.getContext('2d'); T.px.forEach((col, i) => { cc.fillStyle = col; cc.fillRect(i % N, (i / N) | 0, 1, 1); }); g.imageSmoothingEnabled = false;
-  for (let a = 0; a < 3; a++) for (let b2 = 0; b2 < 3; b2++) g.drawImage(c, a * 96, b2 * 96, 96, 96);
+  const T = ui.tileImp, cv = $('#tilePrev'); if (!T || !cv) return; T.px = makeTilePx(T.img, T); const N = T.N, g = cv.getContext('2d'), c = document.createElement('canvas'); c.width = c.height = N;
+  const cc = c.getContext('2d'); T.px.forEach((col, i) => { cc.fillStyle = col; cc.fillRect(i % N, (i / N) | 0, 1, 1); }); g.imageSmoothingEnabled = false; g.clearRect(0, 0, 288, 288);
+  const w = 96 * T.span; for (let a = 0; a < 288; a += w) for (let b2 = 0; b2 < 288; b2 += w) g.drawImage(c, a, b2, w, w);   // 3×3 map squares
+  g.strokeStyle = 'rgba(255,255,255,.18)'; for (let i = 96; i < 288; i += 96) { g.beginPath(); g.moveTo(i + .5, 0); g.lineTo(i + .5, 288); g.moveTo(0, i + .5); g.lineTo(288, i + .5); g.stroke(); }
 }
+const TILE_ZOOMS = [.25, 1 / 3, .5, 1, 2, 3, 4];
+const zoomLbl = z => z < 1 ? `repeats ${Math.round(1 / z)}×${Math.round(1 / z)} per square` : z === 1 ? '1 square' : `spreads over ${z}×${z} squares`;
 document.addEventListener('input', e => { const T = ui.tileImp; if (!T || !e.target.id || !e.target.id.startsWith('tl-')) return; const k = e.target.id.slice(3);
-  if (k === 'size') T.size = +e.target.value; else if (k === 'levels') { T.levels = +e.target.value; $('#tl-lv').textContent = T.levels; } else if (k === 'seam') T.seamless = e.target.checked; drawTilePreview(); });
-function setTileTexture(tag, px, size) {
+  if (k === 'size') T.size = +e.target.value; else if (k === 'levels') { T.levels = +e.target.value; $('#tl-lv').textContent = T.levels; } else if (k === 'seam') T.seamless = e.target.checked;
+  else if (k === 'zoom') { T.zoom = TILE_ZOOMS[+e.target.value] || 1; $('#tl-zv').textContent = zoomLbl(T.zoom); }
+  else if (k === 'dark') { T.dark = +e.target.value / 100; $('#tl-dv').textContent = Math.round(T.dark * 100) + '%'; }
+  drawTilePreview(); });
+function setTileTexture(tag, px, size, span) {
   const b = starter(tag); S.sprites = S.sprites.filter(s => !(s.useAs === tag && (s.kind === 'floor' || s.kind === 'wall')));   // one texture per tile
-  const v = { id: uid(), name: b.name, size, px, v: 1, kind: b.kind, cat: 'Tiles', useAs: tag, useAsMain: true }; S.sprites.push(v);
+  const v = { id: uid(), name: b.name, size, px, v: 1, kind: b.kind, cat: 'Tiles', useAs: tag, useAsMain: true }; if (span > 1) v.span = span; S.sprites.push(v);
   delete b.artFrom; applyArtVariants(); refreshTiles(); return v;
 }
 function refreshTiles() { spriteCache.clear(); waterFrames2.length = 0; if (typeof wallCache !== 'undefined' && wallCache.clear) wallCache.clear(); bumpGround(); groundKey = ''; save(); requestDraw(); }
 function resetTile(tag) {
   const b = starter(tag), gone = S.sprites.filter(s => s.useAs === tag && (s.kind === 'floor' || s.kind === 'wall'));
   for (const s of gone) if (s.src && art.api) { fetch('/art-remove?' + artQ(s.src, '&p=' + encodeURIComponent(s.path)), { method: 'POST' }).catch(() => {}); delete art.meta[s.src][s.path]; saveArtMeta(s.src); }
-  S.sprites = S.sprites.filter(s => !gone.includes(s)); const fresh = STARTERS[tag](); Object.assign(b, { px: fresh.px, size: fresh.size, v: (b.v || 0) + 1 }); delete b.custom; delete b.artFrom; refreshTiles();
+  S.sprites = S.sprites.filter(s => !gone.includes(s)); const fresh = STARTERS[tag](); Object.assign(b, { px: fresh.px, size: fresh.size, v: (b.v || 0) + 1 }); delete b.custom; delete b.artFrom; delete b.span; refreshTiles();
 }
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-tile-rep],[data-tile-reset],[data-tile-save]'); if (!el || !canGM()) return;
   if (el.dataset.tileRep) { ui.tileTag = el.dataset.tileRep; let f = $('#tileFile'); if (!f) { f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.id = 'tileFile'; f.hidden = true; document.body.appendChild(f); } f.value = ''; f.click(); return; }
   if (el.dataset.tileReset) { if (!confirm('Go back to the built-in texture?')) return; resetTile(el.dataset.tileReset); renderLibrary(); toast('↺ Built-in texture restored'); return; }
-  if (el.dataset.tileSave != null) { const T = ui.tileImp; if (!T || !T.px) return; const v = setTileTexture(T.tag, T.px.slice(), T.size); ui.tileImp = null; closeModal();
+  if (el.dataset.tileSave != null) { const T = ui.tileImp; if (!T || !T.px) return; const v = setTileTexture(T.tag, T.px.slice(), T.N, T.span); ui.tileImp = null; closeModal();
     if (art.api) await saveToArt(v, 'global', true); renderLibrary(); toast(`🧱 ${starter(T.tag).name} now uses your texture${art.api ? ' (saved to My Art → Tiles)' : ''}`); }
 });
 document.addEventListener('change', async e => { if (e.target.id !== 'tileFile' || !ui.tileTag) return; const f = e.target.files[0]; if (!f) return;
-  try { const { img } = await loadImageFile(f); ui.tileImp = { tag: ui.tileTag, img, size: 32, levels: 24, seamless: true }; openModal('tileimp'); } catch (err) { toast('Could not read that image'); } });
+  try { const { img } = await loadImageFile(f); ui.tileImp = { tag: ui.tileTag, img, size: 32, levels: 24, seamless: true, zoom: 1, dark: 0 }; openModal('tileimp'); } catch (err) { toast('Could not read that image'); } });
 // the library gets a 🧱 Map tiles view
 const _renderLibraryTiles = renderLibrary;
 renderLibrary = function () {
@@ -8843,9 +8880,10 @@ applyMeta = function (s, meta, cat) {
   _applyMetaTiles(s, meta, cat);
   if (meta.kind === 'floor' || meta.kind === 'wall') s.kind = meta.kind;
   if (cat === 'Tiles') { const tag = meta.useAs || tileTags().find(t => normName(starter(t).name) === normName(s.name)); if (tag) { s.useAs = tag; s.kind = starter(tag).kind; } }
+  if (+meta.span > 1) s.span = Math.min(4, Math.round(+meta.span)); else delete s.span;   // a texture that spreads over several squares
 };
 const _metaOfTiles = metaOf;
-metaOf = function (s) { const o = _metaOfTiles(s); if (s.kind === 'floor' || s.kind === 'wall') o.kind = s.kind; return o; };
+metaOf = function (s) { const o = _metaOfTiles(s); if (s.kind === 'floor' || s.kind === 'wall') o.kind = s.kind; if (+s.span > 1) o.span = +s.span; return o; };
 if (!ART_CATS.includes('Tiles')) { ART_CATS.push('Tiles'); CAT_ICON.Tiles = '🧱'; }
 const _loadArtFoldersTiles = loadArtFolders;
 loadArtFolders = async function (q) { const r = await _loadArtFoldersTiles(q); if (S.sprites.some(s => s.useAs && (s.kind === 'floor' || s.kind === 'wall'))) refreshTiles(); return r; };
@@ -8871,6 +8909,515 @@ document.addEventListener('input', e => { const k = e.target.dataset && e.target
   const A = atmoOf(curMap()), az = (+A.sunAz || 0) * D2R, el = +A.sunEl || 45, r = 22 * Math.cos(el * D2R) + 4, ln = box.querySelector('line'), dot = box.querySelector('circle[fill="#f0cf4a"]');
   if (ln) { ln.setAttribute('x2', (Math.cos(az) * r).toFixed(1)); ln.setAttribute('y2', (Math.sin(az) * r).toFixed(1)); } if (dot) { dot.setAttribute('cx', (Math.cos(az) * r).toFixed(1)); dot.setAttribute('cy', (Math.sin(az) * r).toFixed(1)); }
   e.target.parentElement.querySelector('span').textContent = Math.round(+e.target.value) + '°'; });
+
+
+/* ================= GRASS TUFTS, MIXED NATURE, DARKER TEXTURES, FALLING LEAVES =================
+   • Grass: drop pictures of grass tufts into My Art → Grass (or 📷 Add grass pictures in Tokens → 🧱 Map tiles). Every grass
+     square then scatters a few of them: which picture, where, how big, flipped or not and how light or dark are all picked
+     from the square's own position, so a map always looks the same but no two squares match. With no pictures, the old
+     drawn blades stay.
+   • Random maps (and the build palette) pick from all your tree, bush and rock pictures, not just one.
+   • Any floor or wall texture can be darkened (slider on its card); imported textures can also be darkened and zoomed.
+   • Pine trees drop needles and leafy trees drop leaves; more in a stronger wind. */
+if (!ART_CATS.includes('Grass')) { ART_CATS.splice(ART_CATS.indexOf('Plants') + 1, 0, 'Grass'); CAT_ICON.Grass = '🌱'; PROP_CATS.add('Grass'); }
+CAT_GUESS.unshift(['Grass', /\b(grass|tufts?)\b/i]);
+const GRASS_DEF = { density: 3, size: 1, vary: .4, off: {} };
+const grassCfg = () => Object.assign({}, GRASS_DEF, S.grass || {});
+let grassVer = 0, grassPoolKey = '', grassPoolList = [];
+function grassPool() {
+  const G = grassCfg(), key = S.sprites.length + '|' + grassVer; if (key === grassPoolKey) return grassPoolList;
+  grassPoolKey = key; return (grassPoolList = allGrassPics().filter(s => !G.off[s.id]));
+}
+const allGrassPics = () => S.sprites.filter(s => !s.tag && s.kind === 'object' && hasPx(s) && catOf(s) === 'Grass');   // never the Grass floor tile itself
+const tuftCache = new Map(), TUFT_SHADE = [-.1, 0, .12, .24];   // a little lighter, as drawn, darker, darker still
+function tuftCanvas(s, shade) {
+  const key = s.id + '|' + (s.v || 0) + '|' + shade + '|' + (s.bright || 1); let c = tuftCache.get(key); if (c) return c;
+  const src = spriteCanvas(s.id), bb = spriteBBox(s.id); if (!src || !bb) return null;
+  c = document.createElement('canvas'); c.width = bb.w; c.height = bb.h; const g = c.getContext('2d'); g.drawImage(src, bb.x, bb.y, bb.w, bb.h, 0, 0, bb.w, bb.h);
+  const d = TUFT_SHADE[shade] || 0; if (d) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = d > 0 ? `rgba(0,0,0,${d})` : `rgba(255,255,220,${-d})`; g.fillRect(0, 0, bb.w, bb.h); }
+  c.rel = bb.w / s.size; if (tuftCache.size > 400) tuftCache.clear(); tuftCache.set(key, c); return c;
+}
+// the ground cache only draws the old built-in blades now; picture tufts and foliage are drawn every frame (drawScatter) so they can sway
+function drawGrassBlades(cx, m, x, y) { if (!grassPool().length) drawGrassProc(cx, m, x, y); }
+
+/* ---------- ground scatter: grass tufts (on grass) and foliage (flowers, ferns, mushrooms… on grass and dirt) ----------
+   Where each one goes is worked out once per map (seeded by the square, so it never changes); drawing happens every frame
+   with a sway: gusts roll across the field as a wave, so neighbouring tufts move together, not in lock-step. */
+if (!ART_CATS.includes('Foliage')) { ART_CATS.splice(ART_CATS.indexOf('Grass') + 1, 0, 'Foliage'); CAT_ICON.Foliage = '🌼'; PROP_CATS.add('Foliage'); }
+CAT_GUESS.unshift(['Foliage', /\b(flowers?|ferns?|mushrooms?|clovers?|weeds?|foliage|daisy|daisies|toadstools?|sprouts?|lily|lilies|moss)\b/i]);
+const FOLIAGE_DEF = { density: .35, size: 1, vary: .4, off: {} };
+const foliageCfg = () => Object.assign({}, FOLIAGE_DEF, S.foliage || {});
+const allFoliagePics = () => S.sprites.filter(s => !s.tag && s.kind === 'object' && hasPx(s) && catOf(s) === 'Foliage');
+const SCATTER = [{ cfg: grassCfg, pics: () => grassPool(), tiles: ['grass'], salt: 0x5bd1e995, sway: 1 },
+  { cfg: foliageCfg, pics: () => { const F = foliageCfg(); return allFoliagePics().filter(s => !F.off[s.id]); }, tiles: ['grass', 'dirt'], salt: 0x27d4eb2f, sway: .45 }];
+let scatterKey = '', scatterList = [];
+function scatterFor(m) {
+  const key = [m.id, groundVer, grassVer, S.sprites.length, m.w, m.h, view.rot.toFixed(3), JSON.stringify(S.grass || 0), JSON.stringify(S.foliage || 0)].join('|');
+  if (key === scatterKey) return scatterList;
+  const out = [];
+  for (const L of SCATTER) {
+    const pool = L.pics(), C = L.cfg(); if (!pool.length || !(C.density > 0)) continue;
+    const ids = new Set(L.tiles.map(t => starter(t).id));
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+      const k = x + ',' + y; if (!ids.has(m.tiles[k]) || (m.bridge && m.bridge[k] != null)) continue;
+      const r = rng(((x * 73856093) ^ (y * 19349663) ^ L.salt) >>> 0), n = Math.max(0, Math.floor(C.density * (1 + (r() - .5) * C.vary * 1.4) + r())); if (!n) continue;
+      const z = groundOf(m, x, y);
+      for (let i = 0; i < n; i++) { const u = .14 + r() * .72, v = .14 + r() * .72;
+        out.push({ x, y, gx: x + u, gy: y + v, z, d: depthOf(x + u, y + v), s: pool[Math.floor(r() * pool.length)], k: C.size * (1 + (r() - .5) * C.vary * 1.2), flip: r() < .5,
+          shade: Math.min(3, Math.max(0, Math.round(1 + (r() - .4) * 3 * C.vary))), ph: r() * 6.28, sway: L.sway }); }
+    }
+  }
+  out.sort((a, b) => a.d - b.d); scatterKey = key; return (scatterList = out);
+}
+function drawScatter(cx, m, now, k, PV, W, H) {
+  windFrame(m, now); if (view.zoom <= .4) return; const list = scatterFor(m); if (!list.length) return;
+  const { TW } = isoDims(), A = atmoOf(m), wind = ui.idleAnim === false ? 0 : clamp(+A.wind || 0, 0, 1.5), t = now / 1000, amp = .05 + wind * .16, lean = wind * .06;
+  let drew = 0;
+  for (const T of list) {
+    if (PV && m.fogOn && !m.fog[T.x + ',' + T.y]) continue;
+    const [px, py] = isoPt(T.gx, T.gy, T.z); if (px < -60 || py < -10 || px > W + 60 || py > H + 120) continue;
+    const c = tuftCanvas(T.s, T.shade); if (!c) continue;
+    const w = TW * .5 * T.k * c.rel, h = w * c.height / c.width;
+    // a gust is a wave rolling across the field (downwind), plus a quicker flutter of its own
+    const g = wind ? gustAt(T.gx, T.gy, t) : 0, sw = wind ? ((Math.sin(t * 2.2 + T.ph) * .35 + g * .9) * amp + lean * (.5 + g)) * T.sway * WIND.sx : 0;   // the shared gusts, plus a flutter of its own
+    cx.setTransform(k * (T.flip ? -1 : 1), 0, -k * sw, k, k * px, k * py); cx.drawImage(c, -w / 2, -h + w * .05, w, h); drew++;
+  }
+  cx.setTransform(k, 0, 0, k, 0, 0); if (drew && wind) swaySeen++;   // keeps the animation running
+}
+const grassChanged = () => { grassVer++; tuftCache.clear(); bumpGround(); groundKey = ''; requestDraw(); };
+const _loadArtFoldersGrass = loadArtFolders;
+loadArtFolders = async function (q) { const r = await _loadArtFoldersGrass.apply(this, arguments); grassChanged(); return r; };
+
+/* ---------- random maps use every tree, bush and rock picture you have ---------- */
+const NATURE_POOL = { tree: s => catOf(s) === 'Trees' && !/\b(dead|bare|stump)/i.test(s.name), deadtree: s => catOf(s) === 'Trees' && /\b(dead|bare)\b/i.test(s.name),
+  bush: s => catOf(s) === 'Plants' && /\b(bush(es|y)?|shrubs?|hedges?)\b/i.test(s.name), rock: s => catOf(s) === 'Rocks' };
+const naturePool = tag => S.sprites.filter(s => !s.tag && s.kind === 'object' && hasPx(s) && (s.useAs === tag || (!s.useAs && NATURE_POOL[tag](s))));
+const _propTokenNature = propToken;
+propToken = function (spr, x, y) {
+  if (spr && spr.tag && NATURE_POOL[spr.tag] && S.natureMix !== false) {
+    const pool = naturePool(spr.tag);
+    if (pool.length) { const s = pool[Math.floor(Math.random() * pool.length)], t = _propTokenNature.call(this, s, x, y), p = PRESETS.find(q => q.tag === spr.tag && q.cat === 'prop');
+      t.tag = spr.tag; if (p && p.hp && !t.hpMax) { t.hp = t.hpMax = p.hp; t.armor = p.armor || 0; } if (Math.random() < .5) t.flip = !t.flip; return t; }
+  }
+  return _propTokenNature.apply(this, arguments);
+};
+
+/* ---------- darker textures ---------- */
+const _spriteCanvasDark = spriteCanvas;
+spriteCanvas = function (id) {
+  const c = _spriteCanvasDark(id), s = c && sprById(id); if (!s) return c;
+  const f = (1 - clamp(+s.dark || 0, 0, .9)) * clamp(+s.bright || 1, .2, 2); if (Math.abs(f - 1) < .005) return c;   // Darken (tiles) and Brightness (any picture)
+  const e = spriteCache.get(id); if (!e) return c; if (e.darkCv && e.darkK === f) return e.darkCv;
+  const d = document.createElement('canvas'); d.width = c.width; d.height = c.height; const g = d.getContext('2d');
+  g.filter = `brightness(${f.toFixed(3)})`; g.drawImage(c, 0, 0); g.filter = 'none';
+  e.darkCv = d; e.darkK = f; return d;
+};
+const tilesRedraw = () => { if (typeof wallCache !== 'undefined' && wallCache.clear) wallCache.clear(); bumpGround(); groundKey = ''; requestDraw(); };
+
+/* ---------- 🧱 Map tiles view: darken sliders on every card, and the grass section ---------- */
+const _renderLibraryGrass = renderLibrary;
+renderLibrary = function () {
+  _renderLibraryGrass.apply(this, arguments); const main = $('#libMain'); if (!main) return;
+  if (ui.libCat !== 'tiles') return libCardExtras(main);
+  main.querySelectorAll('[data-tile-rep]').forEach(btn => { const tag = btn.dataset.tileRep, b = starter(tag), pct = Math.round((+b.dark || 0) * 100);
+    btn.closest('.libCard')?.insertAdjacentHTML('beforeend', `<label class="small tileDark">Darken <span>${pct}%</span><input type="range" min="0" max="85" value="${pct}" data-tile-dark="${tag}"></label>`); });
+  const sect = (kind, title, blurb, empty, per, max) => { const C = SCAT_KIND[kind].cfg(), pics = SCAT_KIND[kind].all();
+    return `<h3 class="small" style="margin-top:12px">${title}</h3>
+    <div class="small muted" style="margin-bottom:6px">${blurb} Untick one to leave it out. ${pics.length ? '' : `<b>${empty}</b>`}</div>
+    <div class="grassPics">${pics.map(s => `<label class="grassPic" title="${esc(s.name)}"><img class="pixel" src="${spriteURL(s.id)}" alt=""><input type="checkbox" data-scat-on="${kind}:${s.id}" ${C.off[s.id] ? '' : 'checked'}></label>`).join('')}
+      <button class="small" data-scat-add="${kind}">📷 Add ${kind === 'grass' ? 'grass' : 'foliage'} pictures</button></div>
+    <div class="grassOpts"><label class="small">${per} <span>${C.density}</span><input type="range" min="0" max="${max}" step="${max > 2 ? .5 : .05}" value="${C.density}" data-scat-f="${kind}:density"></label>
+      <label class="small">Size <span>${Math.round(C.size * 100)}%</span><input type="range" min="30" max="250" step="5" value="${Math.round(C.size * 100)}" data-scat-f="${kind}:size"></label>
+      <label class="small">Variety <span>${Math.round(C.vary * 100)}%</span><input type="range" min="0" max="100" step="5" value="${Math.round(C.vary * 100)}" data-scat-f="${kind}:vary"></label></div>`; };
+  main.insertAdjacentHTML('beforeend', sect('grass', '🌱 Grass tufts', 'Pictures of grass tufts (transparent PNGs work best) are scattered over every grass square, mixed at random, and sway in the wind. Drop them in <b>My Art → Grass</b> or add them here.', 'No grass pictures yet: the drawn blades are used.', 'Tufts per square', 8)
+    + sect('foliage', '🌼 Ground foliage', 'Flowers, ferns, mushrooms, little plants: sprinkled at random over grass and dirt squares. Drop them in <b>My Art → Foliage</b> or add them here.', 'No foliage pictures yet.', 'Per square', 2)
+    + `<h3 class="small" style="margin-top:12px">🌲 Random maps</h3>
+    <label class="inline small"><input type="checkbox" id="natureMix" ${S.natureMix !== false ? 'checked' : ''}> Trees, bushes and rocks pick at random from all your pictures of them (Trees, Plants named bush/shrub/hedge, Rocks)</label>
+    <div class="small muted">Now: ${naturePool('tree').length} trees · ${naturePool('bush').length} bushes · ${naturePool('rock').length} rocks · ${naturePool('deadtree').length} dead trees. With none, the built-in picture is used.</div>`);
+};
+const SCAT_KIND = { grass: { cfg: grassCfg, all: allGrassPics, key: 'grass', cat: 'Grass', icon: '🌱' }, foliage: { cfg: foliageCfg, all: allFoliagePics, key: 'foliage', cat: 'Foliage', icon: '🌼' } };
+// every library card gets Stand and Brightness (they change every copy, including tokens already on maps); the list gets category headings
+function libCardExtras(main) {
+  const grid = main.querySelector('.libGrid'); if (!grid) return; let last = null;
+  grid.querySelectorAll(':scope > .libCard').forEach(card => {
+    const id = card.querySelector('[data-lib-place]')?.dataset.libPlace, s = id && sprById(id); if (!s) return;
+    const c = catOf(s); if (c !== last) { last = c; card.insertAdjacentHTML('beforebegin', `<h3 class="libCatHead">${CAT_ICON[c] || ''} ${esc(c)}</h3>`); }
+    const fo = Math.round((+s.footOff || 0) * 100), br = Math.round((+s.bright || 1) * 100);
+    if (br !== 100) card.querySelectorAll('.libPic img, .libPic canvas').forEach(p => { p.style.filter = `brightness(${br / 100})`; });   // the card shows the picture as it will look
+    card.querySelector('.libPic')?.insertAdjacentHTML('afterend', `<label class="small tileDark" title="Raise or lower it on its square (every copy, also ones already placed)">Stand <span>${fo}%</span><input type="range" min="-60" max="60" value="${fo}" data-lib-foot="${s.id}"></label>
+      <label class="small tileDark" title="Darker or brighter (every copy)">Bright <span>${br}%</span><input type="range" min="30" max="170" value="${br}" data-spr-bright="${s.id}"></label>`);
+  });
+}
+document.addEventListener('input', e => {
+  const el = e.target; if (!canGM() || !el.dataset) return;
+  if (el.dataset.tileDark) { const b = starter(el.dataset.tileDark), v = +el.value / 100; if (v > 0) b.dark = v; else delete b.dark; el.parentElement.querySelector('span').textContent = el.value + '%'; tilesRedraw(); return; }
+  if (el.dataset.scatF) { const [kind, k] = el.dataset.scatF.split(':'), K = SCAT_KIND[kind], v = k === 'density' ? +el.value : +el.value / 100; S[K.key] = Object.assign(K.cfg(), { [k]: v });
+    el.parentElement.querySelector('span').textContent = k === 'density' ? v : Math.round(v * 100) + '%'; grassChanged(); return; }
+  if (el.dataset.sprBright) { const s = sprById(el.dataset.sprBright); if (!s) return; e.stopImmediatePropagation(); const v = +el.value / 100;
+    if (Math.abs(v - 1) > .005) s.bright = v; else delete s.bright; const sp = el.parentElement.querySelector('span'); if (sp) sp.textContent = el.value + '%';
+    el.closest('.libCard')?.querySelectorAll('.libPic img, .libPic canvas').forEach(p => { p.style.filter = Math.abs(v - 1) > .005 ? `brightness(${v})` : ''; });   // live preview on the card
+    if (s.kind === 'floor' || s.kind === 'wall') tilesRedraw(); else { tuftCache.clear(); requestDraw(); } return; }
+  if (el.dataset.libFoot) { const s = sprById(el.dataset.libFoot); if (!s) return; if (+el.value) s.footOff = +el.value / 100; else delete s.footOff; s.v = (s.v || 0) + 1;
+    el.parentElement.querySelector('span').textContent = el.value + '%'; requestDraw(); return; }
+});
+document.addEventListener('change', async e => {
+  const el = e.target; if (!canGM() || !el.dataset) return;
+  if (el.dataset.tileDark || el.dataset.scatF) { save(); return; }
+  if (el.dataset.sprBright || el.dataset.libFoot) { const s = sprById(el.dataset.sprBright || el.dataset.libFoot); if (s) { artTouched(s); save(); } return; }
+  if (el.dataset.scatOn) { const [kind, id] = el.dataset.scatOn.split(':'), K = SCAT_KIND[kind], C = K.cfg(); C.off = { ...C.off }; if (el.checked) delete C.off[id]; else C.off[id] = 1; S[K.key] = C; save(); grassChanged(); return; }
+  if (el.id === 'natureMix') { S.natureMix = el.checked; save(); return; }
+  if (el.id === 'scatFile') { const K = SCAT_KIND[el.dataset.kind] || SCAT_KIND.grass, files = [...el.files].slice(0, 40); let n = 0;
+    for (const f of files) { try { const { size, px } = await pngToPx(f); if (!px.some(Boolean)) continue;
+      const s = { id: uid(), name: (f.name || K.cat).replace(/\.[^.]+$/, '').slice(0, 30), size, px, v: 1, kind: 'object', cat: K.cat }; S.sprites.push(s); n++;
+      if (art.api) await saveToArt(s, 'global', true); } catch (err) {} }
+    save(); grassChanged(); renderLibrary(); toast(n ? `${K.icon} ${n} picture${n > 1 ? 's' : ''} added${art.api ? ` (saved to My Art → ${K.cat})` : ''}` : 'Could not read those pictures'); }
+});
+document.addEventListener('click', e => { const b = e.target.closest('[data-scat-add]'); if (!b || !canGM()) return;
+  let f = $('#scatFile'); if (!f) { f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true; f.id = 'scatFile'; f.hidden = true; document.body.appendChild(f); }
+  f.dataset.kind = b.dataset.scatAdd; f.value = ''; f.click(); });
+// Brightness travels with the picture into art.json
+const _metaOfBright = metaOf;
+metaOf = function (s) { const o = _metaOfBright(s); if (+s.bright && Math.abs(+s.bright - 1) > .005) o.bright = +s.bright; return o; };
+const _applyMetaBright = applyMeta;
+applyMeta = function (s, meta, cat) { _applyMetaBright.apply(this, arguments); if (+meta.bright) s.bright = clamp(+meta.bright, .2, 2); else delete s.bright; };
+
+/* ---------- pine needles and leaves fall from trees ---------- */
+const PINE_RE = /\b(pines?|firs?|spruces?|conifers?|evergreens?|cedars?)\b/i, LEAFY_RE = /\b(trees?|oaks?|willows?|birch(es)?|maples?|elms?|aspens?|beech(es)?)\b/i;
+const fallLast = new Map(), fallKind = new Map();
+function treeFall(t, c, fr, sz, now) {
+  if (ui.idleAnim === false || !fr || fr.none) return;
+  let kind = fallKind.get(t.id + '|' + t.spriteId);
+  if (kind === undefined) { const nm = propName(t); kind = /\b(dead|bare|stump)/i.test(nm) ? 0 : PINE_RE.test(nm) ? 2 : LEAFY_RE.test(nm) ? 1 : 0; fallKind.set(t.id + '|' + t.spriteId, kind); }
+  if (!kind) return; const pine = kind === 2;
+  const last = fallLast.get(t.id); fallLast.set(t.id, now); if (last == null || parts.length > 1200) return;
+  const A = atmoOf(curMap()), wind = clamp(+A.wind || 0, 0, 1.5), rate = ((pine ? .2 : .14) + wind * (pine ? .3 : .45)) * (qualityLevel() >= 2 ? .4 : 1) * Math.sqrt(sz * tScale(t));
+  if (Math.random() > Math.min(1, (now - last) / 1000 * rate)) return;
+  const R = Math.random, Hp = (fr.fy - fr.y) / Math.max(.05, view.zoom), z0 = Hp * (.42 + R() * .45), vz = -(pine ? 15 + R() * 10 : 8 + R() * 7);
+  const cols = pine ? ['#2f5a2a', '#3d6b30', '#56783a', '#8a6a3a'] : A.preset === 'autumn' ? LEAF_COLS.autumn : ['#5f9a3e', '#7ab04a', '#4a7f32', '#9cc45a', '#b5c44a'];
+  parts.push({ t: pine ? 'needle' : 'leaf', gx: c.x + sz / 2 + (R() - .5) * .75 * sz, gy: c.y + sz / 2 + (R() - .5) * .75 * sz, z: z0, vz, vx: WIND.dx * wind * .25 * (.6 + R() * .8), vy: WIND.dy * wind * .25 * (.6 + R() * .8),
+    life: 0, max: z0 / -vz + 2.5, s: pine ? 1.3 : 2 + R(), g: 0, seed: R(), col: cols[Math.floor(R() * cols.length)] });
+}
+/* ---------- fog machine: soft puffs that live on the board ----------
+   Each puff has a spot on the map, a height above the ground, a size and a life. They are drawn in depth order with the
+   tokens and props, so a goblin standing in fog has it around its legs and puffs behind it stay behind it. The wind pushes
+   them, slow swirls make them billow and roll, a moving token shoves them aside, and puffs that drift past the edge of the
+   board spill over it and sink, like a fog machine on a real table. The lit tops are lighter than the shaded undersides. */
+try { ui.volFog = localStorage.getItem('vtt-volfog') !== 'off'; } catch (e) { ui.volFog = true; }
+const fogSim = { mapId: null, list: [], t: 0 }, fogBlobs = [], fogTints = new Map();
+function fogBlob(i) {   // a soft, lumpy cloud picture (white, its shape in the alpha)
+  if (fogBlobs[i]) return fogBlobs[i];
+  const N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N; const g = cv.getContext('2d'), img = g.createImageData(N, N), r = rng(9001 + i * 77);
+  const grids = [4, 8, 16].map(G => ({ G, v: Array.from({ length: (G + 1) * (G + 1) }, () => r()) })), sm = t => t * t * (3 - 2 * t);
+  const noise = (x, y) => { let s = 0, a = 1, tot = 0; for (const { G, v } of grids) { const gx = x * G, gy = y * G, x0 = Math.floor(gx), y0 = Math.floor(gy), fx = sm(gx - x0), fy = sm(gy - y0), at = (a2, b2) => v[b2 * (G + 1) + a2];
+    s += (at(x0, y0) * (1 - fx) * (1 - fy) + at(x0 + 1, y0) * fx * (1 - fy) + at(x0, y0 + 1) * (1 - fx) * fy + at(x0 + 1, y0 + 1) * fx * fy) * a; tot += a; a *= .5; } return s / tot; };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const u = x / N, v2 = y / N, d = Math.hypot(u - .5, v2 - .5) * 2, n = noise(u * .999, v2 * .999);
+    const a = clamp((1 - d) * 1.5, 0, 1) ** 1.6 * clamp(.3 + n * 1.1 - .15, 0, 1);   // soft round body, lumpy (not holey) inside
+    img.data.set([255, 255, 255, Math.round(clamp(a, 0, 1) * 255)], (y * N + x) * 4); }
+  g.putImageData(img, 0, 0); return (fogBlobs[i] = cv);
+}
+function fogTint(i, col) {
+  const k = i + col; let c = fogTints.get(k); if (c) return c;
+  const b = fogBlob(i); c = document.createElement('canvas'); c.width = b.width; c.height = b.height; const g = c.getContext('2d'); g.drawImage(b, 0, 0);
+  g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, c.width, c.height); if (fogTints.size > 40) fogTints.clear(); fogTints.set(k, c); return c;
+}
+const mixHex = (a, b, f) => { const A = hexRGB(a), B = hexRGB(b); return hex(A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f, A[2] + (B[2] - A[2]) * f); };
+function newPuff(m, prefill) {
+  const R = Math.random, wisp = R() < .35;
+  return { gx: R() * m.w, gy: R() * m.h, h: 0, hi: wisp ? .3 + R() * .45 : .04 + R() * .16, r: wisp ? .7 + R() * .7 : 1.6 + R() * 1.6, k: wisp ? .45 : .8,
+    life: 10 + R() * 14, age: prefill ? R() * 12 : 0, seed: R(), sp: .6 + R() * .8, i: Math.floor(R() * 4), spin: (R() - .5) * .12 };
+}
+function fogPuffsFrame(m, A, now, PV, items) {
+  const F = fogSim; if (F.mapId !== m.id || F.w !== m.w || F.h !== m.h) Object.assign(F, { mapId: m.id, w: m.w, h: m.h, list: [], t: now });
+  const dt = Math.min(.1, Math.max(0, (now - F.t) / 1000)); F.t = now;
+  const L = F.list, want = Math.min(qualityLevel() >= 2 ? 110 : qualityLevel() === 1 ? 200 : 280, Math.round(clamp(+A.fog || 0, 0, 1) * m.w * m.h * .5)), prefill = L.length === 0;
+  while (L.length < want) { const p = newPuff(m, prefill); if (prefill) p.h = p.hi; L.push(p); }
+  const wind = clamp(+A.wind || 0, 0, 1.5), t = now / 1000, wx = WIND.dx * (.03 + wind * .22), wy = WIND.dy * (.03 + wind * .22);
+  const movers = items.filter(it => it.kind === 'token' && it.c.step != null).map(it => [it.c.x + foot(it.t) / 2, it.c.y + foot(it.t) / 2]);
+  for (let i = L.length - 1; i >= 0; i--) { const p = L[i]; p.age += dt;
+    const gu = .6 + .8 * gustAt(p.gx, p.gy, t);   // fog surges with the same gusts that bend the grass
+    p.gx += (wx * p.sp * gu + Math.sin(p.gy * .55 + t * .21 + p.seed * 6) * .11) * dt; p.gy += (wy * p.sp * gu + Math.cos(p.gx * .5 - t * .17 + p.seed * 4) * .11) * dt;
+    for (const [mx, my] of movers) { const dx = p.gx - mx, dy = p.gy - my, d = Math.hypot(dx, dy); if (d < 1.5 && d > .01) { const f = (1.5 - d) * 1.8 * dt; p.gx += dx / d * f; p.gy += dy / d * f; } }
+    const offBoard = p.gx < 0 || p.gy < 0 || p.gx > m.w || p.gy > m.h;
+    if (offBoard) { p.fall = (p.fall || 0) + dt; p.h -= (.2 + p.fall * .45) * dt; } else p.h += (p.hi - p.h) * Math.min(1, .4 * dt);   // over the edge it spills down
+    if (p.age > p.life || p.h < -2.4 || p.gx < -5 || p.gy < -5 || p.gx > m.w + 5 || p.gy > m.h + 5) L.splice(i, 1);
+  }
+  if (L.length > want) L.length = want;
+  const { TW } = isoDims(), vr = mc().getBoundingClientRect(), fogCol = A.fogCol || '#c8ccd2', c0 = mixHex(fogCol, '#000000', .2), c1 = mixHex(fogCol, '#ffffff', .3), out = [];
+  // torches, fires, glowing props and spells light up the fog around them (brighter in the dark), flickering with the flame
+  const day = clamp(A.light ?? 1, 0, 1), lights = visibleLights(m).map(L => ({ ...L, fl: .82 + .18 * Math.sin(now / 85 + L.x * 3.1) * Math.sin(now / 137 + L.y * 1.7) }));
+  for (const p of L) {
+    const cxl = Math.floor(p.gx), cyl = Math.floor(p.gy), on = cxl >= 0 && cyl >= 0 && cxl < m.w && cyl < m.h;
+    if (PV && on && m.fogOn && !m.fog[cxl + ',' + cyl]) continue;
+    const env = Math.max(0, Math.min(1, p.age / 2.5, (p.life - p.age) / 3.5)), spill = p.h < 0 ? clamp(1 + p.h / 2.4, 0, 1) : 1;
+    const a = clamp(+A.fog || 0, 0, 1) * p.k * env * spill * (qualityLevel() >= 2 ? 1.3 : 1); if (a < .004) continue;
+    const [px, py] = isoPt(p.gx, p.gy, (on ? zAt(p.gx, p.gy) || 0 : 0) + p.h), rad = p.r * TW * .5 * (.75 + .25 * Math.min(1, p.age / 4));
+    if (px < -rad || py < -rad || px > vr.width + rad || py > vr.height + rad) continue;
+    let glow = 0, gcol = null, best = 0;
+    for (const L of lights) { const d = Math.hypot(p.gx - L.x, p.gy - L.y), R = L.r * 1.15 + p.r * .5; if (d >= R) continue; const f = (1 - d / R) ** 2 * L.fl; glow += f; if (f > best) { best = f; gcol = L.col; } }
+    glow = Math.min(1.4, glow) * (1.15 - day * .75);
+    out.push({ d: depthOf(p.gx, p.gy), px, py, rad, a: Math.min(1, a * (1 + (1 - day) * .6)), fx: (p.seed < .5 ? -1 : 1) * (1 + .1 * Math.sin(p.age * .35 + p.seed * 9)), i: p.i, c0, c1, glow, gcol });
+  }
+  return out.sort((x, y) => x.d - y.d);
+}
+// each puff is ONE picture: the shaded body and its lit top baked together (half the drawing of doing them separately)
+const fogSprites = new Map();
+function fogSprite(i, c0, c1) {
+  const key = i + c0 + c1; let c = fogSprites.get(key); if (c) return c;
+  c = document.createElement('canvas'); c.width = 128; c.height = 100; const g = c.getContext('2d'); g.imageSmoothingEnabled = true;
+  g.drawImage(fogTint(i, c0), 0, 62 - 36, 128, 72);   // body, squashed flat onto the board
+  g.globalAlpha = .75; g.drawImage(fogTint((i + 1) % 4, c1), 14, 49 - 25, 100, 50);   // lighter top
+  if (fogSprites.size > 24) fogSprites.clear(); fogSprites.set(key, c); return c;
+}
+function drawFogPuff(cx, q) {
+  const s = q.rad / 64, sx = s * q.fx;   // q.fx: mirrored and slowly breathing wider/narrower, so the billows keep changing
+  cx.save(); cx.imageSmoothingEnabled = true; cx.globalAlpha = q.a; cx.transform(sx, 0, 0, s, q.px, q.py);
+  cx.drawImage(fogSprite(q.i, q.c0, q.c1), -64, -62);
+  if (q.glow > .03 && q.gcol) {   // lit from inside by a nearby light: the fog takes its colour and glows (and blooms)
+    cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = Math.min(1, q.a * q.glow * 1.6); cx.drawImage(fogTint(q.i, q.gcol), -58, -54, 116, 64); }
+  cx.restore();
+}
+const _atmoPanelFog = atmoPanel;
+atmoPanel = function (m) { return _atmoPanelFog.apply(this, arguments) + `<label class="inline small"><input type="checkbox" id="optVolFog" ${ui.volFog !== false ? 'checked' : ''}> Fog floats on the board (3D puffs that roll and spill off the edges)</label>`; };
+document.addEventListener('change', e => { if (e.target.id !== 'optVolFog') return; ui.volFog = e.target.checked; try { localStorage.setItem('vtt-volfog', ui.volFog ? 'on' : 'off'); } catch (_) {} requestDraw(); });
+
+/* ---------- fog of war: a soft, drifting dark-grey cloud over the squares the party hasn't seen ----------
+   Drawn under everything that stands (tokens and props on seen squares are never covered; anything on unseen squares is
+   not drawn for players at all). Its edge is blurred so it fades in over half a square instead of a black stair-step,
+   newly seen squares melt away, and the cloud inside drifts slowly with the board. The GM sees it half see-through. */
+const fowCrisp = document.createElement('canvas'), fowMask = document.createElement('canvas'), fowOut = document.createElement('canvas'); let fowKey = '';
+function fowColumn(g, m, x, y, d) {   // a hidden square's outline on screen, including the side of a raised square down to the ground
+  const z = elevOf(m, x, y), P = zz => [isoPt(x - d, y - d, zz), isoPt(x + 1 + d, y - d, zz), isoPt(x + 1 + d, y + 1 + d, zz), isoPt(x - d, y + 1 + d, zz)];
+  const T = P(z); if (z <= 0) { g.moveTo(T[0][0], T[0][1]); for (let i = 1; i < 4; i++) g.lineTo(T[i][0], T[i][1]); g.closePath(); return; }
+  const B = P(0), pick = (Q, f) => Q.reduce((a, b) => f(a, b) ? a : b);
+  const pts = [pick(T, (a, b) => a[1] < b[1]), pick(T, (a, b) => a[0] < b[0]), pick(B, (a, b) => a[0] < b[0]), pick(B, (a, b) => a[1] > b[1]), pick(B, (a, b) => a[0] > b[0]), pick(T, (a, b) => a[0] > b[0])];
+  g.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 6; i++) g.lineTo(pts[i][0], pts[i][1]); g.closePath();
+}
+function drawFogOfWar(cx, m, PV, now, W, H, k) {
+  W = W || off.width / (k || 1); H = H || off.height / (k || 1); k = k || 1;
+  const q = .5, mw = Math.max(1, Math.ceil(W * q)), mh = Math.max(1, Math.ceil(H * q)), { TW } = isoDims();
+  for (const c of [fowCrisp, fowMask, fowOut]) if (c.width !== mw || c.height !== mh) { c.width = mw; c.height = mh; fowKey = ''; }
+  for (const [kk, t0] of fogFade) if ((now - t0) / 650 >= 1 || !m.fog[kk]) fogFade.delete(kk);
+  const key = [m.id, Object.keys(m.fog).length, m.w, m.h, view.zoom.toFixed(4), view.rot.toFixed(4), Math.round(view.ox * 2), Math.round(view.oy * 2), mw, mh, groundVer].join('|');
+  if (key !== fowKey || fogFade.size) {
+    const g = fowCrisp.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, mw, mh); g.setTransform(q, 0, 0, q, 0, 0); g.fillStyle = '#000'; g.beginPath();
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (!m.fog[x + ',' + y]) fowColumn(g, m, x, y, .1);
+    g.fill();
+    for (const [kk, t0] of fogFade) { const a = (now - t0) / 650, [x, y] = kk.split(',').map(Number); g.globalAlpha = 1 - a * a; g.beginPath(); fowColumn(g, m, x, y, .1); g.fill(); }   // newly seen squares melt away
+    g.globalAlpha = 1;
+    const mg = fowMask.getContext('2d'); mg.setTransform(1, 0, 0, 1, 0, 0); mg.clearRect(0, 0, mw, mh); mg.filter = `blur(${Math.max(1, TW * q * .22).toFixed(1)}px)`;
+    mg.drawImage(fowCrisp, 0, 0); mg.drawImage(fowCrisp, 0, 0); mg.filter = 'none';   // twice: solid inside, soft at the edge
+    fowKey = key;
+  }
+  // the cloud itself: dark grey, with two layers of drifting haze that move with the board
+  const o = fowOut.getContext('2d'), t = now / 1000; o.globalCompositeOperation = 'source-over'; o.setTransform(1, 0, 0, 1, 0, 0); o.clearRect(0, 0, mw, mh);
+  o.fillStyle = '#2b2d33'; o.fillRect(0, 0, mw, mh); o.setTransform(q, 0, 0, q, 0, 0);
+  const z = view.zoom;
+  patLayer(o, fogTexOf('#5c616c'), W, H, 3.2 * z, view.ox + t * 5, view.oy + t * 2, .42);
+  patLayer(o, fogTexOf('#141519'), W, H, 2.1 * z, view.ox - t * 3.5, view.oy + t * 3 + 70, .32);
+  o.setTransform(1, 0, 0, 1, 0, 0); o.globalCompositeOperation = 'destination-in'; o.drawImage(fowMask, 0, 0); o.globalCompositeOperation = 'source-over';
+  cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.imageSmoothingEnabled = true; cx.globalAlpha = PV ? 1 : .5; cx.drawImage(fowOut, 0, 0, off.width, off.height); cx.restore();
+}
+// lights a player may see: not those hidden in the fog of war or on hidden tokens
+function visibleLights(m) {
+  const L = lightSources(m); if (!pvNow()) return L;
+  const hiddenTok = new Set(m.tokens.filter(t => t.hidden).map(t => t.id));
+  return L.filter(s => !hiddenTok.has(s.id) && (!m.fogOn || m.fog[Math.floor(s.x) + ',' + Math.floor(s.y)]));
+}
+// spell and attack animations that start and land in the fog of war aren't shown to players
+const _drawVfxFow = drawVfx;
+drawVfx = function (cx, m, now) {
+  if (!pvNow() || !m.fogOn) return _drawVfxFow.apply(this, arguments);
+  const fogged = (x, y) => !m.fog[Math.floor(x) + ',' + Math.floor(y)], hid = vfx.filter(v => v.mapId === m.id && fogged(v.ax, v.ay) && fogged(v.bx, v.by));
+  hid.forEach(v => { v._mid = v.mapId; v.mapId = null; });
+  try { return _drawVfxFow.apply(this, arguments); } finally { hid.forEach(v => { v.mapId = v._mid; delete v._mid; }); }
+};
+
+/* ================= ONE WIND, IMPACTS, HAZE, CONTACT SHADING, WATER, RUNES =================
+   • One wind for everything: its direction (Atmosphere → Wind direction) and gusts that roll across the board bend
+     trees, bushes and grass, carry leaves and push the fog, all at the same moment, and the cloud shadows drift with it.
+   • Hits shake the view a little and flash the token white; critical hits shake harder and the bloom flares.
+   • Distance haze: the far side of the view fades a little toward the sky/fog colour.
+   • Contact shading (ambient occlusion): ground darkens softly where it meets walls and higher ground.
+   • Water reflects the tokens and props on its banks (wobbling) and picks up a sky sheen.
+   • Spell areas get a glowing rune circle turning on the ground. */
+Object.assign(ATMO_DEFAULT, { windAz: 0, haze: .3 });
+const WIND = { dx: 1, dy: 0, sx: 1, w: .3, cam: '' };
+function gustAt(gx, gy, t) {   // 0..1: gust strength here and now; the gust fronts travel downwind across the board
+  const s = gx * WIND.dx + gy * WIND.dy, sp = .9 + WIND.w * .8;
+  return .5 + .5 * Math.sin(t * sp * 1.4 - s * .45) * (.7 + .3 * Math.sin(t * .27 - s * .11));
+}
+let camShake = null, critKickAt = -1e9;
+function windFrame(m, now) {   // once per frame: wind direction on the board and on screen, and the hit shake
+  const A = atmoOf(m), a = (+A.windAz || 0) * D2R; WIND.dx = Math.cos(a); WIND.dy = Math.sin(a); WIND.w = clamp(+A.wind || 0, 0, 1.5);
+  const [gx, gy] = groundVec(m.w / 2, m.h / 2, 0, WIND.dx, WIND.dy), l = Math.hypot(gx, gy) || 1, vx = gx / l;
+  WIND.sx = (vx < 0 ? -1 : 1) * Math.max(.35, Math.abs(vx));   // which way things lean on screen
+  let tr = '';
+  if (camShake) { const d = (now - camShake.t0) / 280; if (d >= 1) camShake = null; else { const s = camShake.amp * (1 - d) ** 2; tr = `translate(${(Math.sin(now * .09) * s).toFixed(1)}px,${(Math.cos(now * .113) * s * .7).toFixed(1)}px)`; } }
+  if (tr !== WIND.cam) { WIND.cam = tr; for (const id of ['#mapCanvas', '#mapGL', '#mapUI']) { const el = $(id); if (el) el.style.transform = tr; } }
+}
+function swayShear(kind, x, y, now) {   // trees and bushes: their own sway, made bigger by the gust passing over them
+  if (!kind || ui.idleAnim === false) return 0; swaySeen++;
+  const w = clamp(+swayWind || 0, 0, 1.5), t = now / 1000, ph = x * 1.7 + y * 2.3, bush = kind === 2, f = bush ? 1.9 : 1.1;
+  const amp = (bush ? .02 : .03) + w * (bush ? .045 : .075), g = gustAt(x + .5, y + .5, t);
+  return ((Math.sin(t * f + ph) * .5 + Math.sin(t * f * 2.3 + ph * 1.3) * .2) * amp * (.5 + g) + w * .035 * (.4 + g * 1.2)) * WIND.sx;
+}
+// impacts
+function kickCam(a) { if (ui.idleAnim === false) return; const n = performance.now(); camShake = { t0: n, amp: Math.max(a, camShake && n - camShake.t0 < 280 ? camShake.amp : 0) }; requestDraw(); }
+const _shakesSet = shakes.set.bind(shakes);
+shakes.set = function (k, v) { kickCam(2.5); return _shakesSet(k, v); };   // every token that takes a hit shakes the view a touch
+const critBloom = now => { const d = now - critKickAt; return d >= 0 && d < 450 ? .9 * (1 - d / 450) : 0; };
+if (typeof addVfx === 'function') { const _addVfxCrit = addVfx;
+  addVfx = function (p) { if (p && p.crit) { const tr = p.k === 'arrow' ? 230 : p.k === 'bolt' ? 320 : 0; critKickAt = performance.now() + tr; setTimeout(() => kickCam(6), tr); } return _addVfxCrit.apply(this, arguments); }; }
+// clouds drift with the wind, stay put on the board when you pan, and are darker under a high sun
+function cloudShift(A, t) {
+  const sp = 10 + (+A.wind || 0) * 26, [gx, gy] = groundVec(25, 25, 0, WIND.dx, WIND.dy), l = Math.hypot(gx, gy) || 1, s = sunWorld(A);
+  return [view.ox + gx / l * sp * t, view.oy + gy / l * sp * t, clamp(A.light ?? 1, 0, 1) * (.55 + .6 * Math.sin(s.el))];
+}
+function hazeOf(A) {
+  if (ui.postfx === false) return [0, 0, 0, 0];
+  const c = hex3(A.fog > 0 ? A.fogCol : A.rays > 0 ? A.rayCol : (A.light ?? 1) < .5 ? (A.night || '#05060c') : '#a9b8cc');
+  return [c[0], c[1], c[2], clamp(A.haze ?? .3, 0, 1)];
+}
+// contact shading, baked into the cached ground
+const _drawColumnAO = drawColumn;
+drawColumn = function (cx, m, x, y, grid) {
+  _drawColumnAO.call(this, cx, m, x, y, false); blendCell(cx, m, x, y); if (ui.ao !== false) aoCell(cx, m, x, y);
+  if (grid && !(m.bridge && m.bridge[x + ',' + y] != null)) {   // the grid goes on last, so blended borders never cut it into broken pieces
+    const g = groundOf(m, x, y); quadPath(cx, [isoPt(x, y, g), isoPt(x + 1, y, g), isoPt(x + 1, y + 1, g), isoPt(x, y + 1, g)]); cx.strokeStyle = 'rgba(0,0,0,.16)'; cx.lineWidth = 1; cx.stroke(); }
+};
+/* natural floors run into each other: where grass meets dirt (or snow meets grass…) the stronger one pushes a ragged, seeded
+   fringe of its own texture into the square next door, a soft outer pass then a solid inner one, so borders stop being
+   straight lines. Baked into the cached ground: free per frame. */
+const BLEND_RANK = { snow: 5, grass: 4, sand: 3, mud: 2, dirt: 1 };
+let blendIds = null, blendKey = -1;
+function blendTag(id) {
+  if (blendKey !== S.sprites.length) { blendIds = new Map(); for (const t in BLEND_RANK) { const s = starter(t); if (s) blendIds.set(s.id, t); } blendKey = S.sprites.length; }
+  return blendIds.get(id);
+}
+// depth of the fringe at a square corner: the same for every square that shares that corner, so a border flows on without notches
+const vDepth = (vx, vy, axis) => { const h = Math.sin(vx * 127.1 + vy * 311.7 + axis * 74.7) * 43758.5453; return .08 + (h - Math.floor(h)) * .24; };
+function blendCell(cx, m, x, y) {
+  const k = x + ',' + y, me = blendTag(m.tiles[k]); if (!me || (m.bridge && m.bridge[k] != null)) return; const g = groundOf(m, x, y);
+  const nb = (nx, ny) => { if (nx < 0 || ny < 0 || nx >= m.w || ny >= m.h) return null; const id = m.tiles[nx + ',' + ny], t = blendTag(id);
+    return t && t !== me && BLEND_RANK[t] > BLEND_RANK[me] && Math.abs(groundOf(m, nx, ny) - g) <= .01 ? { id, t } : null; };
+  let C = null, P;
+  const fill = (id, path) => {   // paint neighbour texture `id` inside the shape `path` draws (in this square's u,v), soft pass then solid
+    const img = spriteCanvas(id); if (!img) return;
+    if (!C) { C = [isoPt(x, y, g), isoPt(x + 1, y, g), isoPt(x + 1, y + 1, g), isoPt(x, y + 1, g)];
+      P = (u, v) => [C[0][0] + u * (C[1][0] - C[0][0]) + v * (C[3][0] - C[0][0]), C[0][1] + u * (C[1][1] - C[0][1]) + v * (C[3][1] - C[0][1])]; }
+    const sp = Math.max(1, Math.round(+sprById(id)?.span || 1)), n = img.width / sp, sx = sp > 1 ? (((x % sp) + sp) % sp) * n : 0, sy = sp > 1 ? (((y % sp) + sp) % sp) * n : 0;
+    for (const [mul, alpha] of [[1.5, .4], [1, 1]]) {
+      cx.save(); cx.beginPath(); path(mul); cx.closePath(); cx.clip(); cx.globalAlpha = alpha;
+      cx.transform((C[1][0] - C[0][0]) / n, (C[1][1] - C[0][1]) / n, (C[3][0] - C[0][0]) / n, (C[3][1] - C[0][1]) / n, C[0][0], C[0][1]);
+      if (sp > 1) cx.drawImage(img, sx, sy, n, n, 0, 0, n + .6, n + .6); else cx.drawImage(img, 0, 0, n + .6, n + .6);
+      cx.restore(); }
+  };
+  const mv = (u, v) => { const p = P(u, v); cx.moveTo(p[0], p[1]); }, ln = (u, v) => { const p = P(u, v); cx.lineTo(p[0], p[1]); };
+  const qc = (u1, v1, u2, v2) => { const a = P(u1, v1), b = P(u2, v2); cx.quadraticCurveTo(a[0], a[1], b[0], b[1]); };
+  // 1) ragged tongues along each side that touches a stronger floor
+  const sides = [];
+  for (let i = 0; i < 4; i++) {
+    const o = nb(x + FACE_N[i][0], y + FACE_N[i][1]); sides.push(!!o); if (!o) continue;
+    const UV = (s, d) => i === 0 ? [s, d] : i === 1 ? [1 - d, s] : i === 2 ? [1 - s, 1 - d] : [d, 1 - s];   // s along side i, d into this square
+    const V0 = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]][i], V1 = [[x + 1, y], [x + 1, y + 1], [x, y + 1], [x, y]][i], ax = i % 2;
+    const r = rng(((x * 92837111) ^ (y * 689287499) ^ (i * 283923481)) >>> 0), N = 8, depth = [];
+    for (let j = 0; j <= N; j++) depth.push(j === 0 ? vDepth(V0[0], V0[1], ax) : j === N ? vDepth(V1[0], V1[1], ax) : .06 + r() * .3);
+    fill(o.id, mul => { mv(...UV(0, 0)); ln(...UV(1, 0)); ln(...UV(1, depth[N] * mul));
+      for (let j = N; j > 0; j--) qc(...UV(j / N, depth[j] * mul), ...UV((j - .5) / N, (depth[j] + depth[j - 1]) / 2 * mul));
+      ln(...UV(0, depth[0] * mul)); });
+  }
+  // 2) where a border ends at a corner of this square, round it off with a small blob instead of a hard step
+  const CORN = [[-1, -1, 0, 0, 3, 0], [1, -1, 1, 0, 0, 1], [1, 1, 1, 1, 1, 2], [-1, 1, 0, 1, 2, 3]];   // diagonal dx,dy · corner u,v · the two sides that meet there
+  for (const [dx, dy, cu, cv, s1, s2] of CORN) {
+    if (sides[s1] || sides[s2]) continue; const o = nb(x + dx, y + dy); if (!o) continue;
+    const vx = x + cu, vy = y + cv, du = cu ? -1 : 1, dv = cv ? -1 : 1, a = vDepth(vx, vy, 0), b = vDepth(vx, vy, 1);   // a: down the side shared with the row's tongue, b: along the other
+    fill(o.id, mul => { mv(cu, cv); ln(cu, cv + dv * a * mul); qc(cu + du * b * mul * .7, cv + dv * a * mul * .7, cu + du * b * mul, cv); });
+  }
+}
+function aoCell(cx, m, x, y) {
+  const g = groundOf(m, x, y), k = x + ',' + y; if (g <= -3) return; const own = m.walls[k] && sprById(m.walls[k]); if (own && own.kind === 'wall') return;
+  const occ = (nx, ny) => { if (nx < 0 || ny < 0 || nx >= m.w || ny >= m.h) return 0; const s = m.walls[nx + ',' + ny] && sprById(m.walls[nx + ',' + ny]);
+    if (s && s.kind === 'wall') return .42; const d = groundOf(m, nx, ny) - g; return d >= .5 ? Math.min(.5, .24 + d * .08) : 0; };
+  let C = null;
+  for (let i = 0; i < 4; i++) { const a = occ(x + FACE_N[i][0], y + FACE_N[i][1]); if (!a) continue;
+    C = C || [isoPt(x, y, g), isoPt(x + 1, y, g), isoPt(x + 1, y + 1, g), isoPt(x, y + 1, g)];
+    const ctr = [(C[0][0] + C[2][0]) / 2, (C[0][1] + C[2][1]) / 2], A = C[i], B = C[(i + 1) % 4], f = .55, in_ = P => [P[0] + (ctr[0] - P[0]) * f, P[1] + (ctr[1] - P[1]) * f];
+    const A2 = in_(A), B2 = in_(B), m1 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], m2 = [(A2[0] + B2[0]) / 2, (A2[1] + B2[1]) / 2], gr = cx.createLinearGradient(m1[0], m1[1], m2[0], m2[1]);
+    gr.addColorStop(0, `rgba(0,0,0,${a})`); gr.addColorStop(1, 'rgba(0,0,0,0)'); cx.fillStyle = gr;
+    cx.beginPath(); cx.moveTo(A[0], A[1]); cx.lineTo(B[0], B[1]); cx.lineTo(B2[0], B2[1]); cx.lineTo(A2[0], A2[1]); cx.closePath(); cx.fill(); }
+}
+// water: reflections of whatever stands on the banks, and a sky sheen
+const _drawWaterFx = drawWater;
+drawWater = function (cx, m, now) { _drawWaterFx.apply(this, arguments); if (waterCells.length && qualityLevel() < 2) waterFx(cx, m, now); };
+function waterFx(cx, m, now) {
+  const cells = waterCells.filter(([x, y]) => !(m.bridge && m.bridge[x + ',' + y] != null)); if (!cells.length) return;
+  const A = atmoOf(m), day = clamp(A.light ?? 1, 0, 1), t = now / 1000, PV = pvNow(), wset = new Set(cells.map(([x, y]) => x + ',' + y)), cv = mc();
+  cx.save(); cx.beginPath(); for (const [x, y] of cells) diamondSub(cx, x, y, 0, m); cx.clip();
+  const sky = A.fog > 0 ? A.fogCol : A.rays > 0 ? A.rayCol : '#bcd4ea', gr = cx.createLinearGradient(0, 0, 0, cv.clientHeight);
+  gr.addColorStop(0, hexA(sky, .22 * (.35 + .65 * day))); gr.addColorStop(1, hexA(sky, .03)); cx.globalCompositeOperation = 'screen'; cx.fillStyle = gr; cx.fillRect(0, 0, cv.clientWidth, cv.clientHeight);
+  cx.globalCompositeOperation = 'source-over';
+  for (const tk of m.tokens) {
+    if (PV && (tk.hidden || (m.fogOn && !m.fog[tk.x + ',' + tk.y]))) continue;
+    const c = tokenCell(tk), sz = foot(tk), x0 = Math.floor(c.x), y0 = Math.floor(c.y); let near = false;
+    for (let a = -1; a <= sz && !near; a++) for (let b = -1; b <= sz && !near; b++) if (wset.has((x0 + a) + ',' + (y0 + b))) near = true;
+    if (!near) continue;
+    const id = tokenSprite(tk), img = spriteCanvas(id), fr = figureRect(id, c.x, c.y, sz, (isProp(tk) ? 1 : .95) * tScale(tk)); if (!img || fr.none || !fr.bb) continue;
+    const mir = tokenMirror(tk), sl = Math.max(2, fr.h / 12), lift = tokenLift(tk, now);
+    for (let yy = 0; yy < fr.h; yy += sl) {   // flipped, in slices that wobble side to side, fading with distance
+      const sh = sl / fr.h * fr.bb.h, sy = fr.bb.y + fr.bb.h - (yy / fr.h) * fr.bb.h - sh, wob = Math.sin(t * 2.2 + yy * .3 + c.x * 2) * (1 + yy * .05) * view.zoom;
+      cx.globalAlpha = .3 * (1 - yy / fr.h) * (.45 + .55 * day);
+      cx.save(); cx.translate(fr.fx + wob, fr.fy + yy + lift); cx.scale(mir, -1); cx.drawImage(img, fr.bb.x, sy, fr.bb.w, sh, fr.x - fr.fx, -sl, fr.w, sl + .5); cx.restore(); }
+  }
+  cx.restore();
+}
+// rune circles under spell areas
+let runeBaseCv = null; const runeTints = new Map();
+function runeBase() {
+  if (runeBaseCv) return runeBaseCv;
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d'), r = rng(4242), C = N / 2;
+  const ink = (lw) => { g.strokeStyle = '#fff'; g.lineWidth = lw; g.lineCap = 'round';
+    for (const rr of [118, 104, 62]) { g.beginPath(); g.arc(C, C, rr, 0, 7); g.stroke(); }
+    for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2, r1 = i % 2 ? 104 : 108, r2 = 118; g.beginPath(); g.moveTo(C + Math.cos(a) * r1, C + Math.sin(a) * r1); g.lineTo(C + Math.cos(a) * r2, C + Math.sin(a) * r2); g.stroke(); }
+    g.beginPath(); for (let i = 0; i <= 6; i++) { const a = i / 6 * Math.PI * 2 * 2 - Math.PI / 2, p = [C + Math.cos(a) * 100, C + Math.sin(a) * 100]; i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); } g.stroke();   // a star
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + .2, cx0 = C + Math.cos(a) * 83, cy0 = C + Math.sin(a) * 83; g.beginPath();   // little glyphs
+      for (let k = 0; k < 3; k++) { const ax = (r() - .5) * 14, ay = (r() - .5) * 14, bx = (r() - .5) * 14, by = (r() - .5) * 14; g.moveTo(cx0 + ax, cy0 + ay); g.lineTo(cx0 + bx, cy0 + by); } g.stroke(); } };
+  g.filter = 'blur(5px)'; ink(6); g.filter = 'none'; ink(2.2);   // soft glow under crisp lines
+  return (runeBaseCv = c);
+}
+function runeTint(col) {
+  let c = runeTints.get(col); if (c) return c; const b = runeBase(); c = document.createElement('canvas'); c.width = b.width; c.height = b.height; const g = c.getContext('2d');
+  g.drawImage(b, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, c.width, c.height); runeTints.set(col, c); return c;
+}
+const RUNE_FX = { fire: 1, frost: 1, lightning: 1, holy: 1, darkness: 1, poison: 1 };
+function drawRunes(cx, m, now, PV) {
+  if (!m.effects || !m.effects.length) return;
+  for (const ef of m.effects) { const F = FX[ef.type]; if (!F || !RUNE_FX[ef.type]) continue;
+    const cells = effectCells(ef, m); if (!cells.length) continue; let sx = 0, sy = 0; for (const [x, y] of cells) { sx += x; sy += y; }
+    const gx = sx / cells.length + .5, gy = sy / cells.length + .5; if (PV && m.fogOn && !m.fog[Math.floor(gx) + ',' + Math.floor(gy)]) continue;
+    const r = Math.max(.8, Math.sqrt(cells.length / Math.PI) + .25), z = zAt(gx, gy), [ox, oy] = isoPt(gx, gy, z), ux = groundVec(gx, gy, z, r, 0), uy = groundVec(gx, gy, z, 0, r);
+    const dir = hashId(String(ef.id || ef.type)) % 2 ? 1 : -1, rot = now / 1000 * .45 * dir, pulse = .5 + .22 * Math.sin(now / 420 + gx), tint = runeTint(F.col);
+    cx.save(); cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = pulse; cx.transform(ux[0] / 128, ux[1] / 128, uy[0] / 128, uy[1] / 128, ox, oy);
+    cx.rotate(rot); cx.drawImage(tint, -128, -128, 256, 256);
+    cx.rotate(-rot * 2.4); cx.globalAlpha = pulse * .55; cx.drawImage(tint, -78, -78, 156, 156); cx.restore(); }
+}
+// Atmosphere: wind direction and distance haze
+const _atmoPanelWind = atmoPanel;
+atmoPanel = function (m) { const A = atmoOf(m);
+  return _atmoPanelWind.apply(this, arguments) + `<div class="sunBox"><b class="small">🌬 Wind &amp; distance</b>
+    <label class="aRow">Wind direction <span class="muted">${Math.round(+A.windAz || 0)}°</span><input type="range" data-atmo-f="windAz" min="0" max="359" step="1" value="${+A.windAz || 0}"></label>
+    <label class="aRow">Distance haze<input type="range" data-atmo-f="haze" min="0" max="1" step=".05" value="${A.haze ?? .3}"></label>
+    <label class="inline small"><input type="checkbox" id="optAO" ${ui.ao !== false ? 'checked' : ''}> Contact shading at walls and cliffs</label></div>`; };
+document.addEventListener('input', e => { if (e.target.dataset && e.target.dataset.atmoF === 'windAz') { const s = e.target.parentElement.querySelector('span'); if (s) s.textContent = Math.round(+e.target.value) + '°'; } });
+try { ui.ao = localStorage.getItem('vtt-ao') !== 'off'; } catch (e) { ui.ao = true; }
+document.addEventListener('change', e => { if (e.target.id !== 'optAO') return; ui.ao = e.target.checked; try { localStorage.setItem('vtt-ao', ui.ao ? 'on' : 'off'); } catch (_) {} bumpGround(); groundKey = ''; requestDraw(); });
+
+// leaves flutter side to side on the way down; needles mostly drop
+const _updPartsFall = updParts;
+updParts = function (dt) {
+  for (const p of parts) if ((p.t === 'leaf' || p.t === 'needle') && p.z > 0) { const leaf = p.t === 'leaf', ph = p.life * (leaf ? 3.1 : 5) + p.seed * 9;
+    p.gx += Math.sin(ph) * (leaf ? .4 : .1) * dt; p.gy += Math.cos(ph * .7) * (leaf ? .15 : .05) * dt; }
+  return _updPartsFall.apply(this, arguments);
+};
 
 </script>
 </body>
