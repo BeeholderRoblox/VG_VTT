@@ -1,0 +1,7 @@
+# Your own campaign and its backups stay on this PC
+campaign.json
+campaign.json.tmp
+campaign-backup-*.json
+
+# Valve's file: the server copies it from an installed Steam game by itself, and it isn't ours to share
+steam_api64.dll
